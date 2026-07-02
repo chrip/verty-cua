@@ -10,9 +10,7 @@ find_package(OpenCV REQUIRED)
 add_executable(verty
     src/main.cpp
     src/scroll_detector.cpp
-    src/frame_classifier.cpp
-    src/global_canvas.cpp
-    src/renderer.cpp
+    src/stitcher.cpp
 )
 
 target_include_directories(verty PRIVATE src ${OpenCV_INCLUDE_DIRS})

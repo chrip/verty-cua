@@ -32,7 +32,8 @@ std::pair<int, float> ScrollDetector::best_dy(const cv::Mat& prev_gray,
 
 // ── detect ────────────────────────────────────────────────────────────────────
 ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
-                                    const cv::Mat& curr_gray)
+                                    const cv::Mat& curr_gray,
+                                    const cv::Mat& fixed_mask)
 {
     const int cols = curr_gray.cols;
     const int rows = curr_gray.rows;
@@ -52,14 +53,29 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
     std::uniform_int_distribution<int> dist_x(0, blocks_x - 1);
     std::uniform_int_distribution<int> dist_y(gy_min, gy_max);
 
-    // Histogram: scroll_dy → vote count
-    std::map<int, int> hist;
+    // A sample block is usable only if it is (mostly) NOT fixed. With no mask
+    // (one-pass / first pass) every block is usable — full-viewport fallback.
+    auto block_is_scrollable = [&](int px, int py) {
+        if (fixed_mask.empty()) return true;
+        if (px + BLOCK_SIZE > fixed_mask.cols || py + BLOCK_SIZE > fixed_mask.rows)
+            return true;
+        double fixed_frac =
+            cv::mean(fixed_mask(cv::Rect(px, py, BLOCK_SIZE, BLOCK_SIZE)))[0] / 255.0;
+        return fixed_frac <= 0.25;   // reject blocks that are mostly fixed chrome
+    };
 
-    for (int s = 0; s < SCROLL_SAMPLES; ++s) {
+    // Histogram: scroll_dy → vote count. Keep drawing until we have SCROLL_SAMPLES
+    // usable (scrolling) blocks, or we run out of attempts.
+    std::map<int, int> hist;
+    int collected = 0;
+    const int max_attempts = SCROLL_SAMPLES * 8;
+    for (int a = 0; a < max_attempts && collected < SCROLL_SAMPLES; ++a) {
         int gx = dist_x(rng);
         int gy = dist_y(rng);
         int px = gx * BLOCK_SIZE;
         int py = gy * BLOCK_SIZE;
+        if (!block_is_scrollable(px, py)) continue;
+        ++collected;
 
         auto [dy, mad] = best_dy(prev_gray, curr_gray, px, py);
         if (mad < SAD_THRESHOLD) {
@@ -92,7 +108,7 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
     //   2. Dominance: best must beat runner-up by ≥ 50%.
     //      Static/identical frames produce a nearly flat histogram because gray
     //      blocks match at ANY dy offset; the ratio catches that ambiguity.
-    const int min_votes   = std::max(5, SCROLL_SAMPLES / 10);
+    const int min_votes   = std::max(5, collected / 10);
     const int second_floor = std::max(1, second_votes);
     res.valid = (res.votes >= min_votes)
              && (res.votes >= second_floor * 3 / 2);   // ≥ 1.5× runner-up

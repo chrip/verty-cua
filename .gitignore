@@ -1,3 +1,6 @@
 build/
 *.png
 *.mp4
+
+# generated recording sessions (frames/*.jpg, session.mp4, outputs/, ground_truth.json)
+test_data/session_*/

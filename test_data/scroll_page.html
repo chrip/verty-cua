@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stitching Test Page — fixed chrome + scrolling content</title>
+<style>
+  /* ── Reset / base ─────────────────────────────────────────────────────── */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Designed dimensions of the fixed regions. The JS reports the MEASURED
+       values, which are the actual ground truth — these are just the intent. */
+    --header-h: 72px;
+    --footer-h: 56px;
+    --left-w:   240px;
+    --right-w:  180px;
+  }
+
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1f2733;
+    background: #eef1f5;
+    line-height: 1.55;
+    /* The body itself scrolls; the fixed chrome overlays it. */
+  }
+
+  /* ── Fixed header ─────────────────────────────────────────────────────── */
+  #site-header {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: var(--header-h);
+    background: #1b3a5b;
+    color: #fff;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 24px;
+    z-index: 40;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25);
+  }
+  #site-header .logo {
+    font-weight: 700; font-size: 20px; letter-spacing: .5px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #site-header .logo .mark {
+    width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg, #5ac8fa, #007aff);
+  }
+  #site-header nav { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+  #site-header nav a { color: #cfe0f2; text-decoration: none; position: relative;
+    padding: 6px 2px; transition: color .15s ease; }
+  #site-header nav a:hover { color: #fff; }
+  #site-header nav a::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 2px;
+    background: #5ac8fa; transform: scaleX(0); transform-origin: left;
+    transition: transform .18s ease;
+  }
+  #site-header nav a:hover::after { transform: scaleX(1); }
+
+  /* ── Fixed footer ─────────────────────────────────────────────────────── */
+  #site-footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: var(--footer-h);
+    background: #14202e;
+    color: #9fb1c4;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px;
+    font-size: 13px;
+    z-index: 40;
+    box-shadow: 0 -2px 6px rgba(0,0,0,.25);
+  }
+
+  /* ── Fixed left sidebar ───────────────────────────────────────────────── */
+  #left-sidebar {
+    position: fixed;
+    top: var(--header-h); bottom: var(--footer-h); left: 0;
+    width: var(--left-w);
+    background: #223146;
+    color: #d7e1ee;
+    padding: 18px 14px;
+    overflow: hidden;
+    z-index: 30;
+  }
+  #left-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #7f93ab; margin-bottom: 12px; }
+  #left-sidebar nav { display: flex; flex-direction: column; }
+  #left-sidebar a.nav-item {
+    padding: 10px 12px; border-radius: 6px; margin-bottom: 4px;
+    font-size: 14px; color: #d7e1ee; text-decoration: none;
+    display: flex; align-items: center; gap: 10px;
+    transition: background-color .15s ease, color .15s ease, transform .12s ease;
+  }
+  #left-sidebar a.nav-item .ico { width: 18px; height: 18px; border-radius: 4px;
+    background: #3f5872; flex: 0 0 auto; transition: background-color .15s ease; }
+  #left-sidebar a.nav-item.active { background: #34517a; color: #fff; }
+  #left-sidebar a.nav-item:hover { background: #2e496b; color: #fff; transform: translateX(3px); }
+  #left-sidebar a.nav-item:hover .ico { background: #5ac8fa; }
+
+  /* ── Fixed right sidebar ──────────────────────────────────────────────── */
+  #right-sidebar {
+    position: fixed;
+    top: var(--header-h); bottom: var(--footer-h); right: 0;
+    width: var(--right-w);
+    background: #ffffff;
+    border-left: 1px solid #d9e0e8;
+    padding: 18px 14px;
+    overflow: hidden;
+    z-index: 30;
+  }
+  #right-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #8a97a6; margin-bottom: 12px; }
+  #right-sidebar .widget {
+    background: #f3f6fa; border: 1px solid #e3e9f0; border-radius: 8px;
+    padding: 12px; margin-bottom: 12px; font-size: 13px; color: #45505f;
+  }
+  #right-sidebar .widget .bar { height: 8px; border-radius: 4px; margin-top: 8px;
+    background: linear-gradient(90deg, #007aff, #5ac8fa); }
+
+  /* ── Scrolling content area (the middle) ──────────────────────────────── */
+  #scroll-content {
+    /* Clear the fixed chrome on every side. */
+    margin: var(--header-h) var(--right-w) var(--footer-h) var(--left-w);
+    padding: 32px 40px 60px;
+    background: #ffffff;
+    min-height: calc(100vh - var(--header-h) - var(--footer-h));
+  }
+  #scroll-content h1 { font-size: 30px; margin-bottom: 6px; color: #14202e; }
+  #scroll-content .lead { color: #55636f; font-size: 16px; margin-bottom: 28px; }
+  #scroll-content section { margin-bottom: 40px; }
+  #scroll-content h2 { font-size: 22px; margin: 28px 0 10px; color: #1b3a5b;
+    border-bottom: 2px solid #e6ecf2; padding-bottom: 6px; }
+  #scroll-content h3 { font-size: 17px; margin: 18px 0 8px; color: #2b3a4d; }
+  #scroll-content p { margin-bottom: 14px; color: #333c47; }
+
+  /* Inline content links + hover */
+  #scroll-content a:not(.next-article) {
+    color: #007aff; text-decoration: none;
+    border-bottom: 1px solid rgba(0,122,255,.4); padding: 0 1px;
+    transition: color .15s ease, background-color .15s ease, border-color .15s ease;
+  }
+  #scroll-content a:not(.next-article):hover {
+    color: #0051b3; background: rgba(0,122,255,.12); border-bottom-color: #0051b3;
+  }
+  /* Prominent "next article" call-to-action link */
+  .next-article {
+    display: inline-block; margin: 6px 0 4px; padding: 11px 20px;
+    background: #007aff; color: #fff; border-radius: 8px; font-weight: 600;
+    text-decoration: none;
+    transition: background-color .15s ease, transform .12s ease, box-shadow .18s ease;
+  }
+  .next-article:hover {
+    background: #0060d0; transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0,122,255,.4);
+  }
+
+  /* Self-contained image placeholder (no network dependency). */
+  .img-placeholder {
+    width: 100%; height: 220px; border-radius: 8px; margin: 14px 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #ffffff; font-size: 14px; font-weight: 600; letter-spacing: .5px;
+    background-color: #8fa3b8;
+    background-image:
+      repeating-linear-gradient(45deg,
+        rgba(255,255,255,.12) 0, rgba(255,255,255,.12) 12px,
+        transparent 12px, transparent 24px);
+    text-shadow: 0 1px 2px rgba(0,0,0,.35);
+  }
+  .img-placeholder.tall { height: 340px; }
+  .img-placeholder.a { background-color: #6c8ebf; }
+  .img-placeholder.b { background-color: #7aa06f; }
+  .img-placeholder.c { background-color: #b08a5a; }
+  .img-row { display: flex; gap: 16px; }
+  .img-row .img-placeholder { height: 160px; }
+</style>
+</head>
+<body>
+
+  <!-- ══ FIXED HEADER ══════════════════════════════════════════════════════ -->
+  <header id="site-header" data-region="header">
+    <span class="logo"><span class="mark"></span> StitchDocs</span>
+    <nav>
+      <a href="scroll_page_2.html">Overview</a>
+      <a href="scroll_page_2.html">Guides</a>
+      <a href="scroll_page_2.html">Reference</a>
+      <a href="scroll_page_2.html">Support</a>
+    </nav>
+  </header>
+
+  <!-- ══ FIXED LEFT SIDEBAR ════════════════════════════════════════════════ -->
+  <aside id="left-sidebar" data-region="left">
+    <h2>Navigation</h2>
+    <nav>
+      <a class="nav-item active" href="scroll_page_2.html"><span class="ico"></span> Getting Started</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Installation</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Configuration</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Pipeline</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Scroll Detection</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Classification</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Stitching</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Rendering</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> Troubleshooting</a>
+      <a class="nav-item" href="scroll_page_2.html"><span class="ico"></span> FAQ</a>
+    </nav>
+  </aside>
+
+  <!-- ══ FIXED RIGHT SIDEBAR ═══════════════════════════════════════════════ -->
+  <aside id="right-sidebar" data-region="right">
+    <h2>On this page</h2>
+    <div class="widget">Introduction<div class="bar" style="width:90%"></div></div>
+    <div class="widget">Architecture<div class="bar" style="width:70%"></div></div>
+    <div class="widget">Fixed elements<div class="bar" style="width:55%"></div></div>
+    <div class="widget">Scroll model<div class="bar" style="width:40%"></div></div>
+    <div class="widget">Ground truth<div class="bar" style="width:25%"></div></div>
+  </aside>
+
+  <!-- ══ SCROLLING CONTENT (THE MIDDLE) ════════════════════════════════════ -->
+  <main id="scroll-content" data-region="scroll">
+    <h1>Reconstructing a Full-Page Screenshot</h1>
+    <p class="lead">A test document with a fixed header, footer, and two fixed
+      sidebars, plus a tall scrolling body — the exact shape the stitching
+      algorithm is designed to reassemble from a screen recording.</p>
+
+    <section id="sec-intro">
+      <h2>1. Introduction</h2>
+      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+        tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+        veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+        commodo consequat. Duis aute irure dolor in reprehenderit in voluptate.</p>
+      <p>Velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint
+        occaecat cupidatat non proident, sunt in culpa qui officia deserunt
+        mollit anim id est laborum. For a contrasting case study, jump to the
+        <a href="scroll_page_2.html">companion article</a> — the layout is
+        identical, only this body changes.</p>
+      <div class="img-placeholder a">IMAGE PLACEHOLDER — 100% × 220</div>
+      <p>Nulla facilisi. Nam sed elit at massa vulputate cursus. Vestibulum ante
+        ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.</p>
+      <a class="next-article" href="scroll_page_2.html">Read the next article →</a>
+    </section>
+
+    <section id="sec-architecture">
+      <h2>2. Architecture</h2>
+      <h3>2.1 Two passes per frame</h3>
+      <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem
+        accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab
+        illo inventore veritatis et quasi architecto beatae vitae dicta sunt.</p>
+      <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut
+        fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem
+        sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor.</p>
+      <div class="img-row">
+        <div class="img-placeholder b">FIGURE A</div>
+        <div class="img-placeholder c">FIGURE B</div>
+      </div>
+      <h3>2.2 Grid of blocks</h3>
+      <p>Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis
+        suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur. Quis
+        autem vel eum iure reprehenderit qui in ea voluptate velit esse.</p>
+    </section>
+
+    <section id="sec-fixed">
+      <h2>3. Fixed elements</h2>
+      <p>At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis
+        praesentium voluptatum deleniti atque corrupti quos dolores et quas
+        molestias excepturi sint occaecati cupiditate non provident.</p>
+      <div class="img-placeholder tall">DIAGRAM — 100% × 340</div>
+      <p>Similique sunt in culpa qui officia deserunt mollitia animi, id est
+        laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita
+        distinctio. Nam libero tempore, cum soluta nobis est eligendi optio.</p>
+      <p>Temporibus autem quibusdam et aut officiis debitis aut rerum
+        necessitatibus saepe eveniet ut et voluptates repudiandae sint et
+        molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente.</p>
+    </section>
+
+    <section id="sec-scroll">
+      <h2>4. Scroll model</h2>
+      <h3>4.1 Dominant offset</h3>
+      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer nec
+        odio. Praesent libero. Sed cursus ante dapibus diam. Sed nisi. Nulla
+        quis sem at nibh elementum imperdiet. Duis sagittis ipsum. Praesent
+        mauris. Fusce nec tellus sed augue semper porta.</p>
+      <div class="img-placeholder a">IMAGE PLACEHOLDER — 100% × 220</div>
+      <h3>4.2 Region growth</h3>
+      <p>Mauris massa. Vestibulum lacinia arcu eget nulla. Class aptent taciti
+        sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos.
+        Curabitur sodales ligula in libero. Sed dignissim lacinia nunc.</p>
+      <p>Curabitur tortor. Pellentesque nibh. Aenean quam. In scelerisque sem at
+        dolor. Maecenas mattis. Sed convallis tristique sem. Proin ut ligula vel
+        nunc egestas porttitor. Morbi lectus risus, iaculis vel, suscipit quis.</p>
+    </section>
+
+    <section id="sec-groundtruth">
+      <h2>5. Ground truth</h2>
+      <p>Luctus ut, massa. Fusce ac turpis quis ligula lacinia aliquet. Mauris
+        ipsum. Nulla metus metus, ullamcorper vel, tincidunt sed, euismod in,
+        nibh. Quisque volutpat condimentum velit. Class aptent taciti sociosqu.</p>
+      <div class="img-row">
+        <div class="img-placeholder c">THUMB 1</div>
+        <div class="img-placeholder b">THUMB 2</div>
+        <div class="img-placeholder a">THUMB 3</div>
+      </div>
+      <p>Nam nec ante. Sed lacinia, urna non tincidunt mattis, tortor neque
+        adipiscing diam, a cursus ipsum ante quis turpis. Nulla facilisi. Ut
+        fringilla. Suspendisse potenti. Nunc feugiat mi a tellus consequat.</p>
+      <p>Vivamus id enim. Phasellus neque orci, porta a, aliquet quis, semper a,
+        massa. Phasellus purus. Pellentesque tristique imperdiet tortor. Nam
+        euismod tellus id erat. This section marks the bottom of the document —
+        continue to the <a href="scroll_page_2.html">second article</a>.</p>
+      <a class="next-article" href="scroll_page_2.html">Read the next article →</a>
+    </section>
+  </main>
+
+  <!-- ══ FIXED FOOTER ══════════════════════════════════════════════════════ -->
+  <footer id="site-footer" data-region="footer">
+    <span>© 2026 StitchDocs — Test fixture</span>
+    <span>Fixed footer · always visible</span>
+  </footer>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   GROUND-TRUTH INSTRUMENTATION
+   All measurements are echoed to the browser console. Open DevTools (F12) →
+   Console to read them. These are the reference values the stitching algorithm
+   should reproduce from a screen recording of this page.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Round to 2 decimals for readable logs. */
+function r(n) { return Math.round(n * 100) / 100; }
+
+/** Bounding box of an element expressed in DOCUMENT coordinates.
+ *  getBoundingClientRect() is viewport-relative, so we add the current scroll
+ *  offset to recover the position within the full page. For position:fixed
+ *  elements the viewport rect IS the ground truth (they never move), but adding
+ *  the scroll offset at scrollY=0 is harmless and keeps one formula. */
+function docBox(el) {
+  const b = el.getBoundingClientRect();
+  return {
+    x: r(b.left + window.scrollX),
+    y: r(b.top + window.scrollY),
+    width: r(b.width),
+    height: r(b.height),
+  };
+}
+
+/** Compact descriptor for an element (used in the full dump). */
+function describe(el) {
+  const b = el.getBoundingClientRect();
+  return {
+    tag: el.tagName.toLowerCase(),
+    id: el.id || '',
+    class: (typeof el.className === 'string' ? el.className : '') || '',
+    position: getComputedStyle(el).position,
+    x: r(b.left + window.scrollX),
+    y: r(b.top + window.scrollY),
+    width: r(b.width),
+    height: r(b.height),
+  };
+}
+
+/** Full-page dimensions — the height is the stitching output's target height. */
+function pageMetrics() {
+  const doc = document.documentElement;
+  return {
+    viewportWidth:  window.innerWidth,
+    viewportHeight: window.innerHeight,
+    pageWidth:  Math.max(doc.scrollWidth,  doc.clientWidth),
+    pageHeight: Math.max(doc.scrollHeight, doc.clientHeight),
+    maxScrollY: Math.max(doc.scrollHeight - window.innerHeight, 0),
+    devicePixelRatio: window.devicePixelRatio,
+  };
+}
+
+/** The five layout regions, keyed by their data-region attribute. */
+function regionBoxes() {
+  const out = {};
+  document.querySelectorAll('[data-region]').forEach(el => {
+    out[el.getAttribute('data-region')] = docBox(el);
+  });
+  return out;
+}
+
+/** Assemble and log the full ground-truth object. Call again after resize. */
+function logGroundTruth() {
+  const metrics = pageMetrics();
+  const regions = regionBoxes();
+
+  const groundTruth = {
+    page: metrics,
+    regions,
+    // Convenience scalars for the stitching algorithm:
+    fixed: {
+      headerHeight: regions.header ? regions.header.height : 0,
+      footerHeight: regions.footer ? regions.footer.height : 0,
+      leftWidth:    regions.left   ? regions.left.width    : 0,
+      rightWidth:   regions.right  ? regions.right.width   : 0,
+    },
+  };
+
+  console.group('%c[GROUND TRUTH]', 'color:#007aff;font-weight:bold');
+  console.log('page height (stitch target):', metrics.pageHeight, 'px');
+  console.log('viewport:', metrics.viewportWidth + '×' + metrics.viewportHeight,
+              '| max scrollY:', metrics.maxScrollY, 'px',
+              '| DPR:', metrics.devicePixelRatio);
+  console.log('fixed regions (px):', groundTruth.fixed);
+  console.table(regions);
+  console.log('full ground-truth object:', groundTruth);
+  console.groupEnd();
+
+  // Expose for programmatic access / copy-paste.
+  window.GROUND_TRUTH = groundTruth;
+  return groundTruth;
+}
+
+/** Bounding boxes of EVERY element on the page (document coordinates). */
+function logAllBoundingBoxes() {
+  const all = Array.from(document.querySelectorAll('*'))
+    // Skip <script>/<style> etc. that have no visual box.
+    .filter(el => el.getClientRects().length > 0)
+    .map(describe);
+
+  console.group('%c[ALL ELEMENT BOUNDING BOXES]', 'color:#7aa06f;font-weight:bold',
+                '(' + all.length + ' elements)');
+  console.table(all);
+  console.log('array:', all);
+  console.groupEnd();
+
+  window.ALL_BOXES = all;
+  return all;
+}
+
+/* ── Scroll-event collection ─────────────────────────────────────────────── */
+const scrollLog = [];
+window.SCROLL_LOG = scrollLog;
+
+function recordScroll() {
+  const entry = {
+    index: scrollLog.length,
+    scrollX: r(window.scrollX),
+    scrollY: r(window.scrollY),
+    t: r(performance.now()),
+  };
+  scrollLog.push(entry);
+  console.log('%c[scroll]', 'color:#b08a5a',
+              'y=' + entry.scrollY + 'px', '(#' + entry.index + ', t=' + entry.t + 'ms)');
+}
+
+// Throttle to one log per animation frame so fast scrolls don't flood.
+let scrollPending = false;
+window.addEventListener('scroll', () => {
+  if (scrollPending) return;
+  scrollPending = true;
+  requestAnimationFrame(() => { scrollPending = false; recordScroll(); });
+}, { passive: true });
+
+/** Dump the collected scroll trace as a table. */
+function dumpScrollLog() {
+  console.group('%c[SCROLL LOG]', 'color:#b08a5a;font-weight:bold',
+                '(' + scrollLog.length + ' events)');
+  console.table(scrollLog);
+  console.groupEnd();
+  return scrollLog;
+}
+window.dumpScrollLog = dumpScrollLog;
+
+/* ── Boot ────────────────────────────────────────────────────────────────── */
+window.addEventListener('load', () => {
+  // Ensure we measure at the top of the page (document coords == viewport coords).
+  window.scrollTo(0, 0);
+  console.clear();
+  console.log('%c=== Stitching test page loaded ===',
+              'color:#1b3a5b;font-size:14px;font-weight:bold');
+  logGroundTruth();
+  logAllBoundingBoxes();
+  console.log('%cTip:', 'font-weight:bold',
+              'scroll the page to log scroll events; call dumpScrollLog() for the full trace, ' +
+              'or re-run logGroundTruth() / logAllBoundingBoxes() after a resize.');
+});
+
+// Re-measure on resize (layout-dependent ground truth changes).
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    console.log('%c[resize] re-measuring ground truth', 'color:#8a97a6');
+    logGroundTruth();
+  }, 200);
+});
+</script>
+</body>
+</html>
