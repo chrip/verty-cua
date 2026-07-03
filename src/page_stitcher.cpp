@@ -3,10 +3,9 @@
 #include <iostream>
 
 // ── construction ──────────────────────────────────────────────────────────────
-PageStitcher::PageStitcher(std::string video_path, PageVisit visit,
-                           int frame_w, int frame_h, double fps,
-                           bool verbose, int page_id)
-    : video_path_(std::move(video_path)), visit_(visit),
+PageStitcher::PageStitcher(std::string video_path, int frame_w, int frame_h,
+                           double fps, bool verbose, int page_id)
+    : video_path_(std::move(video_path)),
       frame_w_(frame_w), frame_h_(frame_h), fps_(fps),
       verbose_(verbose), page_id_(page_id),
       accumulator_(frame_w, frame_h)
@@ -14,43 +13,37 @@ PageStitcher::PageStitcher(std::string video_path, PageVisit visit,
     fixed_mask_ = cv::Mat::zeros(frame_h_, frame_w_, CV_8UC1);
 }
 
-VideoSource PageStitcher::open_at_visit() const
+VideoSource PageStitcher::open_at(const PageVisit& v) const
 {
     VideoSource video(video_path_);
-    if (video.ok()) video.skip_to(visit_.firstFrame);
+    if (video.ok()) video.skip_to(v.firstFrame);
     return video;
 }
 
-cv::Mat PageStitcher::run()
+// ── add_visit ─────────────────────────────────────────────────────────────────
+void PageStitcher::add_visit(const PageVisit& visit, long vt_start)
 {
-    if (frame_w_ <= 0 || frame_h_ <= 0) return {};
-    analyze();
-    refine_scrolls();
-    return reconstruct();
+    if (frame_w_ <= 0 || frame_h_ <= 0) return;
+    analyze_visit(visit, vt_start);
+    refine_visit(visit, vt_start);
 }
 
-// ── analyze (PASS 1) ──────────────────────────────────────────────────────────
-// Accumulate the fixed-pixel mask and a rough per-frame scroll offset.
-void PageStitcher::analyze()
+// ── analyze_visit (PASS 1) ────────────────────────────────────────────────────
+// Accumulate the fixed-pixel mask (shared across the page's visits) and a
+// rough per-frame scroll offset for this visit.
+void PageStitcher::analyze_visit(const PageVisit& visit, long vt_start)
 {
-    VideoSource video = open_at_visit();
+    VideoSource video = open_at(visit);
     if (!video.ok()) return;
 
     VideoSource::Frame f;
     cv::Mat curr_gray, prev_gray;
-    vt_by_frame_.clear();
-    max_vt_ = 0;
-
-    if (!video.next(f) || !in_visit(f.index)) return;
+    if (!video.next(f) || f.index > visit.lastFrame) return;
     cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
     prev_gray = curr_gray.clone();
-    f.bgr.copyTo(first_frame_);   // scroll top
-    f.bgr.copyTo(last_frame_);
 
-    long vt = 0;
-    vt_by_frame_.push_back(vt);   // the visit's first frame sits at the doc top
-
-    while (video.next(f) && in_visit(f.index)) {
+    long vt = std::max(0L, vt_start);
+    while (video.next(f) && f.index <= visit.lastFrame) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
         Transition tr = classifier_.classify(prev_gray, curr_gray);  // no mask yet
@@ -58,84 +51,86 @@ void PageStitcher::analyze()
             accumulator_.accumulate(prev_gray, curr_gray);
             vt = std::max(0L, vt + tr.dy);
         }
-
-        vt_by_frame_.push_back(vt);
-        if (vt >= max_vt_) { max_vt_ = vt; f.bgr.copyTo(last_frame_); }
         prev_gray = curr_gray.clone();
     }
 
     fixed_mask_ = accumulator_.mask();
     extract_rects();
 
-    if (verbose_) {
-        std::cout << "[page " << page_id_ << " analyze] frames=" << vt_by_frame_.size()
-                  << "  maxScroll=" << max_vt_ << "px"
-                  << "  docHeight=" << doc_height() << "px\n";
-        std::cout << "[page " << page_id_ << " analyze] fixed header: " << header_h_ << "px"
+    if (verbose_)
+        std::cout << "[page " << page_id_ << " analyze] visit ["
+                  << visit.firstFrame << ".." << visit.lastFrame << "]"
+                  << "  fixed header: " << header_h_ << "px"
                   << "  footer: " << footer_h_ << "px"
                   << "  left: "   << left_w_   << "px"
                   << "  right: "  << right_w_  << "px\n";
-    }
 }
 
-// ── refine_scrolls (PASS 2) ─────────────────────────────────────────────────
-// Re-classify every transition of the visit, telling the detector which pixels
-// are fixed so it samples only genuine scrolling content. Overwrites the rough
-// pass-1 offsets with the authoritative ones.
-void PageStitcher::refine_scrolls()
+// ── refine_visit (PASS 2) ─────────────────────────────────────────────────────
+// Re-classify the visit's transitions with the page's fixed mask, producing the
+// authoritative scroll offsets. Also tracks the frames showing the document's
+// shallowest / deepest point (band sources for stamping).
+void PageStitcher::refine_visit(const PageVisit& visit, long vt_start)
 {
-    if (fixed_mask_.empty()) return;
-
-    VideoSource video = open_at_visit();
+    VideoSource video = open_at(visit);
     if (!video.ok()) return;
 
     VideoSource::Frame f;
     cv::Mat curr_gray, prev_gray;
-    if (!video.next(f) || !in_visit(f.index)) return;
+    if (!video.next(f) || f.index > visit.lastFrame) return;
     cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
     prev_gray = curr_gray.clone();
 
-    std::vector<long> vt_by_frame(1, 0);
-    long vt = 0, max_vt = 0;
+    VisitTrace trace;
+    trace.visit    = visit;
+    trace.vt_start = vt_start;
 
-    while (video.next(f) && in_visit(f.index)) {
+    long vt = std::max(0L, vt_start);
+    trace.vt_by_frame.push_back(vt);
+
+    auto track_extremes = [&](long v, const cv::Mat& bgr) {
+        if (min_vt_ < 0 || v <= min_vt_) { min_vt_ = v; bgr.copyTo(first_frame_); }
+        if (v >= max_vt_)                { max_vt_ = v; bgr.copyTo(last_frame_);  }
+    };
+    track_extremes(vt, f.bgr);
+
+    while (video.next(f) && f.index <= visit.lastFrame) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
         Transition tr = classifier_.classify(prev_gray, curr_gray, fixed_mask_);
         if (tr.type == TransitionType::Scroll)
             vt = std::max(0L, vt + tr.dy);
 
-        vt_by_frame.push_back(vt);
-        max_vt = std::max(max_vt, vt);
+        trace.vt_by_frame.push_back(vt);
+        track_extremes(vt, f.bgr);
         prev_gray = curr_gray.clone();
     }
 
-    vt_by_frame_ = std::move(vt_by_frame);
-    max_vt_      = max_vt;
-    build_scroll_events();
+    append_scroll_events(trace);
+    visits_.push_back(std::move(trace));
 
     if (verbose_)
-        std::cout << "[page " << page_id_ << " refine] mask-aware maxScroll=" << max_vt_
-                  << "px  docHeight=" << doc_height() << "px"
+        std::cout << "[page " << page_id_ << " refine] visit ["
+                  << visit.firstFrame << ".." << visit.lastFrame << "]"
+                  << "  vtStart=" << vt_start
+                  << "  docHeight=" << doc_height() << "px"
                   << "  scrollEvents=" << scroll_events_.size() << "\n";
 }
 
-// ── build_scroll_events ───────────────────────────────────────────────────────
-// The scroll-event trace is derived from the refined per-frame viewport tops:
-// every frame whose vt differs from its predecessor is one scroll step.
+// ── append_scroll_events ──────────────────────────────────────────────────────
+// Every frame whose vt differs from its predecessor is one scroll step.
 // Frame indices and timestamps are global (session coordinates).
-void PageStitcher::build_scroll_events()
+void PageStitcher::append_scroll_events(const VisitTrace& trace)
 {
-    scroll_events_.clear();
-    for (size_t i = 1; i < vt_by_frame_.size(); ++i) {
-        long dy = vt_by_frame_[i] - vt_by_frame_[i - 1];
+    for (size_t i = 1; i < trace.vt_by_frame.size(); ++i) {
+        long dy = trace.vt_by_frame[i] - trace.vt_by_frame[i - 1];
         if (dy == 0) continue;
-        const long frame = visit_.firstFrame + static_cast<long>(i);
+        const long frame = trace.visit.firstFrame + static_cast<long>(i);
         scroll_events_.push_back({
             frame,
             static_cast<double>(frame) / fps_,
             static_cast<int>(dy),
-            vt_by_frame_[i],
+            trace.vt_by_frame[i],
         });
     }
 }
@@ -177,9 +172,9 @@ void PageStitcher::extract_rects()
 
 // ── stamp ─────────────────────────────────────────────────────────────────────
 // Paste one fixed band onto the final canvas at its document position. Header and
-// sidebars are sourced from the top frame, the footer from the bottom frame, so
-// that each band's (possibly over-detected) margin lines up with the correct
-// adjacent content.
+// sidebars are sourced from the shallowest-scroll frame, the footer from the
+// deepest-scroll frame, so that each band's (possibly over-detected) margin
+// lines up with the correct adjacent content.
 void PageStitcher::stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const
 {
     const cv::Rect& r = fr.rect;
@@ -189,10 +184,13 @@ void PageStitcher::stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const
 
     switch (fr.kind) {
     case FixedKind::Footer: {
-        // Bottom-anchored: keep its distance from the viewport bottom.
-        int dst_y = static_cast<int>(doc_h) - (frame_h_ - r.y);
+        // Bottom-anchored: keep its distance from the viewport bottom. Extended
+        // upward by the interior margin (correct content in the deepest frame).
+        const int ext = std::min(INTERIOR_ROW_MARGIN, r.y);
+        const cv::Rect band(r.x, r.y - ext, r.width, r.height + ext);
+        int dst_y = static_cast<int>(doc_h) - (frame_h_ - band.y);
         if (dst_y >= 0)
-            src.copyTo(canvas(cv::Rect(r.x, dst_y, r.width, r.height)));
+            src_frame(band).copyTo(canvas(cv::Rect(band.x, dst_y, band.width, band.height)));
         break;
     }
     case FixedKind::Left:
@@ -211,14 +209,18 @@ void PageStitcher::stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const
         break;
     }
     case FixedKind::Header:
-    default:
-        // Anchored where it was seen in the viewport (the top).
-        src.copyTo(canvas(cv::Rect(r.x, r.y, r.width, r.height)));
+    default: {
+        // Anchored at the top. Extended downward by the interior margin
+        // (correct content in the shallowest frame).
+        const int ext = std::min(INTERIOR_ROW_MARGIN, frame_h_ - (r.y + r.height));
+        const cv::Rect band(r.x, r.y, r.width, r.height + ext);
+        src_frame(band).copyTo(canvas(cv::Rect(band.x, band.y, band.width, band.height)));
         break;
+    }
     }
 }
 
-// ── reconstruct (PASS 3) ──────────────────────────────────────────────────────
+// ── reconstruct (merge all visits) ────────────────────────────────────────────
 cv::Mat PageStitcher::reconstruct()
 {
     const long doc_h = doc_height();
@@ -227,25 +229,30 @@ cv::Mat PageStitcher::reconstruct()
     // The scroll content is the interior rectangle inside the fixed bands.
     // Copying it wholesale (rather than masking the raw fixed pixels) avoids both
     // holes from false-positive fixed pixels and the need for a per-frame mask.
-    const cv::Rect interior(left_w_, header_h_,
+    // Rows are cropped INTERIOR_ROW_MARGIN inside the bands so a slightly
+    // under-detected band cannot smear chrome residue across the stitch; the
+    // extended header/footer stamps close the margin at the document ends.
+    const int m = INTERIOR_ROW_MARGIN;
+    const cv::Rect interior(left_w_, header_h_ + m,
                             frame_w_ - left_w_ - right_w_,
-                            frame_h_ - header_h_ - footer_h_);
+                            frame_h_ - header_h_ - footer_h_ - 2 * m);
     if (interior.width <= 0 || interior.height <= 0) return canvas;
 
-    VideoSource video = open_at_visit();
-    if (!video.ok()) return canvas;
+    for (const VisitTrace& trace : visits_) {
+        VideoSource video = open_at(trace.visit);
+        if (!video.ok()) continue;
 
-    // Stitch: place each frame's interior at its recorded scroll offset.
-    VideoSource::Frame f;
-    while (video.next(f) && in_visit(f.index)) {
-        const long local = f.index - visit_.firstFrame;
-        long vt = local < static_cast<long>(vt_by_frame_.size())
-                      ? vt_by_frame_[local]
-                      : (vt_by_frame_.empty() ? 0 : vt_by_frame_.back());
-        vt = std::max(0L, vt);
-        int dst_y = static_cast<int>(vt) + interior.y;
-        if (dst_y + interior.height > static_cast<int>(doc_h)) continue;   // safety
-        f.bgr(interior).copyTo(canvas(cv::Rect(interior.x, dst_y, interior.width, interior.height)));
+        VideoSource::Frame f;
+        while (video.next(f) && f.index <= trace.visit.lastFrame) {
+            const long local = f.index - trace.visit.firstFrame;
+            long vt = local < static_cast<long>(trace.vt_by_frame.size())
+                          ? trace.vt_by_frame[local]
+                          : (trace.vt_by_frame.empty() ? 0 : trace.vt_by_frame.back());
+            vt = std::max(0L, vt);
+            int dst_y = static_cast<int>(vt) + interior.y;
+            if (dst_y + interior.height > static_cast<int>(doc_h)) continue;   // safety
+            f.bgr(interior).copyTo(canvas(cv::Rect(interior.x, dst_y, interior.width, interior.height)));
+        }
     }
 
     // Stamp the fixed chrome on top: sidebars first, then header/footer, so the

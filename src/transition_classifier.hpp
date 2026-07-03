@@ -54,4 +54,10 @@ public:
 
 private:
     ScrollDetector scroll_;
+
+    // True iff shifting prev by dy leaves at most SCROLL_RESIDUAL_MAX of the
+    // (non-fixed, overlapping) area changed — i.e. the dy explains the frame.
+    [[nodiscard]] static bool scroll_explains(const cv::Mat& prev_gray,
+                                              const cv::Mat& curr_gray,
+                                              int dy, const cv::Mat& fixed_mask);
 };

@@ -18,8 +18,15 @@
                 session_page1/.  Ground-truth schema: single-page (benchmark).
      multipage  visit page 1, scroll a little, hover a few links, click a link,
                 land on page 2 and stay there for a few seconds.  Defaults:
-                scroll_page.html → session_multipage/.  Ground-truth schema:
-                multi-page (pages[], per-frame page id, events, navigations).
+                scroll_page.html → session_multipage/.
+     revisit    page 1 → scroll → click to page 2 → scroll → HISTORY BACK to
+                page 1 → scroll further (Milestone-4 fixture: recurring page).
+                Defaults: scroll_page.html → session_revisit/.
+
+   Multi-page ground-truth schema (multipage + revisit): pages[] are UNIQUE
+   pages (keyed by file); visits[] is the chronological visit list; frames
+   carry {page, scrollY} with page = unique page id (null during navigation
+   transitions); events[] and navigations[] describe hovers/clicks/backs.
 
    Tunables below: viewport size, scroll step, pauses, fps, JPEG quality.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -37,13 +44,13 @@ const argv = process.argv.slice(2);
 let PLAN_NAME = 'single';
 const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
-if (!['single', 'multipage'].includes(PLAN_NAME)) {
-  console.error(`unknown plan: ${PLAN_NAME} (use single|multipage)`);
+if (!['single', 'multipage', 'revisit'].includes(PLAN_NAME)) {
+  console.error(`unknown plan: ${PLAN_NAME} (use single|multipage|revisit)`);
   process.exit(1);
 }
+const DEFAULT_OUT = { single: 'session_page1', multipage: 'session_multipage', revisit: 'session_revisit' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, 'scroll_page.html'));
-const OUT_DIR   = resolve(argv[1] ||
-  join(HERE, PLAN_NAME === 'multipage' ? 'session_multipage' : 'session_page1'));
+const OUT_DIR   = resolve(argv[1] || join(HERE, DEFAULT_OUT[PLAN_NAME]));
 const FRAMES_DIR = join(OUT_DIR, 'frames');
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -78,6 +85,20 @@ const MULTIPAGE_PLAN = [
   { click: '#scroll-content a.next-article' },                    // → page 2
   { park:  { x: 30, y: 870 } },                                   // mouse off the links
   { pause: 75 },                                                  // stay ~2.5 s
+];
+
+// Revisit plan (Milestone-4 fixture): the session returns to a page it has
+// already seen — via HISTORY BACK — and then scrolls further, extending the
+// coverage its first visit left behind.
+const REVISIT_PLAN = [
+  { pause: 12 },                                                  // arrive page 1
+  { to: 0.25 }, { pause: 10 },                                    // scroll (~590px)
+  { click: '#scroll-content a.next-article' },                    // → page 2
+  { pause: 12 },
+  { to: 0.15 }, { pause: 10 },                                    // scroll page 2 a bit
+  { back: true },                                                 // history back → page 1
+  { pause: 12 },
+  { to: 0.45 }, { pause: 10 },                                    // scroll deeper than visit 1
 ];
 
 // ── CDP plumbing ──────────────────────────────────────────────────────────────
@@ -245,27 +266,73 @@ async function runSingle() {
   console.log(`  trajectory: scrollRange [${minY}, ${maxY}]px, reachedBottom=${maxY >= maxScrollY}, maxGap=${maxGap}px`);
 }
 
-// ── Plan: multipage ───────────────────────────────────────────────────────────
-async function runMultipage() {
-  const pages = [];
+// ── Multi-page session runner (plans: multipage, revisit) ────────────────────
+async function runSession(plan) {
+  const pages = [];                    // UNIQUE pages, keyed by file
+  const pageIndexByFile = new Map();
+  const visits = [];                   // chronological {page, firstFrame, lastFrame, arrivedBy}
   const events = [];
   const navigations = [];
 
-  const pageEntry = (gt, file) => ({
-    file,
-    pageHeight: gt.page.pageHeight,
-    maxScrollY: gt.page.maxScrollY,
-    fixed: gt.fixed,
-    regions: gt.regions,
-  });
+  // Register the currently loaded page; returns its unique index + ground truth.
+  const registerPage = async () => {
+    const gt = await evaluate('window.GROUND_TRUTH');
+    const file = await evaluate('decodeURIComponent(location.pathname)');
+    if (!pageIndexByFile.has(file)) {
+      pageIndexByFile.set(file, pages.length);
+      pages.push({ file, pageHeight: gt.page.pageHeight, maxScrollY: gt.page.maxScrollY,
+                   fixed: gt.fixed, regions: gt.regions });
+    }
+    return { idx: pageIndexByFile.get(file), gt };
+  };
 
   let gt = await loadPage('file://' + PAGE_FILE);
-  pages.push(pageEntry(gt, PAGE_FILE));
-  let pageIdx = 0;
+  let pageIdx = (await registerPage()).idx;
   let curY = 0;
-  console.log(`page 0: ${PAGE_FILE} (pageHeight ${gt.page.pageHeight}px)`);
+  visits.push({ page: pageIdx, firstFrame: 0, lastFrame: -1, arrivedBy: 'initial' });
+  console.log(`page ${pageIdx}: ${PAGE_FILE} (pageHeight ${gt.page.pageHeight}px)`);
 
-  for (const step of MULTIPAGE_PLAN) {
+  // Capture through a navigation until the new page is stable, then register
+  // it. Transition frames (state unreadable / still loading) get page:null —
+  // the window the segmenter must skip. Stable frames are patched to the new
+  // page id once it is known.
+  const navigate = async (kind, triggerFrame) => {
+    const fromPage = pageIdx;
+    visits[visits.length - 1].lastFrame = frameNo - 1;
+
+    let stable = 0, firstStableFrame = -1;
+    const stableIdx = [];
+    for (let i = 0; i < 200 && stable < 3; i++) {
+      await sleep(SETTLE_MS);
+      const st = await tryEvaluate(
+        '(document.readyState === "complete" && window.GROUND_TRUTH) ? {ready: true, scrollY: Math.round(window.scrollY)} : null');
+      if (st && st.ready) {
+        if (firstStableFrame < 0) firstStableFrame = frameNo;
+        stable++;
+        stableIdx.push(frameNo);
+        await capture({ page: -1, scrollY: st.scrollY });   // patched below
+      } else {
+        stable = 0;
+        firstStableFrame = -1;
+        stableIdx.length = 0;
+        await capture({ page: null, scrollY: null });
+      }
+    }
+
+    const reg = await registerPage();
+    pageIdx = reg.idx;
+    gt = reg.gt;
+    for (const i of stableIdx) frames[i].page = pageIdx;
+    curY = await evaluate('Math.round(window.scrollY)');
+
+    navigations.push({ fromPage, toPage: pageIdx, kind, triggerFrame, firstStableFrame });
+    visits.push({ page: pageIdx, firstFrame: firstStableFrame, lastFrame: -1, arrivedBy: kind });
+    events.push({ type: 'pageLoaded', page: pageIdx, frame: firstStableFrame });
+    console.log(`${kind} @frame ${triggerFrame} → page ${pageIdx} `
+              + `(scrollY ${curY}), stable @frame ${firstStableFrame}`);
+  };
+
+  for (const step of plan) {
     if (step.pause) {
       for (let i = 0; i < step.pause; i++) await capture({ page: pageIdx, scrollY: curY });
       continue;
@@ -291,45 +358,27 @@ async function runMultipage() {
     if (step.click) {
       const c = await elementCenter(step.click);
       await moveMouse(c.x, c.y);
-      const clickFrame = frameNo;   // the click lands between this frame and the previous
+      const triggerFrame = frameNo;
       await call('Input.dispatchMouseEvent', { type: 'mousePressed',  x: c.x, y: c.y, button: 'left', clickCount: 1 });
       await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', clickCount: 1 });
-      events.push({ type: 'click', selector: step.click, frame: clickFrame });
-
-      // Capture through the navigation until the new page is stable. Frames
-      // whose state can't be read (context destroyed / not loaded) are marked
-      // page:null — the "transition window" the segmenter must learn to skip.
-      const fromPage = pageIdx;
-      let stable = 0;
-      let firstStableFrame = -1;
-      for (let i = 0; i < 200 && stable < 3; i++) {
-        await sleep(SETTLE_MS);
-        const st = await tryEvaluate(
-          '(document.readyState === "complete" && window.GROUND_TRUTH) ? {ready: true, scrollY: Math.round(window.scrollY)} : null');
-        if (st && st.ready) {
-          if (firstStableFrame < 0) firstStableFrame = frameNo;
-          stable++;
-          await capture({ page: pages.length, scrollY: st.scrollY });   // new page id
-        } else {
-          stable = 0;
-          firstStableFrame = -1;
-          await capture({ page: null, scrollY: null });                  // transition
-        }
-      }
-      gt = await evaluate('window.GROUND_TRUTH');
-      const newFile = await evaluate('decodeURIComponent(location.pathname)');
-      pageIdx = pages.length;
-      pages.push(pageEntry(gt, newFile));
-      curY = await evaluate('Math.round(window.scrollY)');
-      navigations.push({ fromPage, toPage: pageIdx, clickFrame, firstStableFrame });
-      events.push({ type: 'pageLoaded', page: pageIdx, frame: firstStableFrame });
-      console.log(`click ${step.click} @frame ${clickFrame} → page ${pageIdx} (${newFile}), stable @frame ${firstStableFrame}`);
+      events.push({ type: 'click', selector: step.click, frame: triggerFrame });
+      await navigate('click', triggerFrame);
+      continue;
+    }
+    if (step.back) {
+      const triggerFrame = frameNo;
+      const h = await call('Page.getNavigationHistory');
+      if (h.currentIndex <= 0) throw new Error('no history entry to go back to');
+      events.push({ type: 'back', frame: triggerFrame });
+      await call('Page.navigateToHistoryEntry', { entryId: h.entries[h.currentIndex - 1].id });
+      await navigate('back', triggerFrame);
       continue;
     }
   }
+  visits[visits.length - 1].lastFrame = frameNo - 1;
 
   const meta = {
-    plan: 'multipage',
+    plan: PLAN_NAME,
     recordedAt: new Date().toISOString(),
     viewport: { width: VIEWPORT_W, height: VIEWPORT_H, deviceScaleFactor: 1 },
     avgStep: AVG_STEP,
@@ -337,6 +386,7 @@ async function runMultipage() {
     jpegQuality: JPEG_QUALITY,
     frameCount: frames.length,
     pages,
+    visits,
     events,
     navigations,
     frames,
@@ -344,7 +394,8 @@ async function runMultipage() {
   writeFileSync(join(OUT_DIR, 'ground_truth.json'), JSON.stringify(meta, null, 2));
   console.log(`\n✔ ${frames.length} frames → ${FRAMES_DIR}`);
   console.log(`✔ ground truth → ${join(OUT_DIR, 'ground_truth.json')}`);
-  console.log(`  pages: ${pages.length}, navigations: ${navigations.length}, `
+  console.log(`  unique pages: ${pages.length}, visits: ${visits.length}, `
+            + `navigations: ${navigations.length}, `
             + `transition frames: ${frames.filter(f => f.page === null).length}`);
 }
 
@@ -359,8 +410,9 @@ try {
   rmSync(FRAMES_DIR, { recursive: true, force: true });
   mkdirSync(FRAMES_DIR, { recursive: true });
 
-  if (PLAN_NAME === 'multipage') await runMultipage();
-  else                           await runSingle();
+  if      (PLAN_NAME === 'multipage') await runSession(MULTIPAGE_PLAN);
+  else if (PLAN_NAME === 'revisit')   await runSession(REVISIT_PLAN);
+  else                                await runSingle();
 } catch (e) {
   console.error('record failed:', e.message);
   process.exitCode = 1;

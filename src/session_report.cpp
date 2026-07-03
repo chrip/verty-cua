@@ -52,7 +52,7 @@ bool SessionReport::write(const std::string& path,
         << ", \"pageChange\": " << tc.pageChange
         << ", \"unstable\": " << tc.unstable << "},\n";
 
-    // ── Pages ────────────────────────────────────────────────────────────────
+    // ── Pages (one entry per DISTINCT page; a page can have several visits) ──
     out << "  \"pages\": [\n";
     const auto& pages = session.pages();
     for (size_t i = 0; i < pages.size(); ++i) {
@@ -61,11 +61,17 @@ bool SessionReport::write(const std::string& path,
             << ", \"stitch\": \"" << escape(i < stitch_paths.size() ? stitch_paths[i] : "") << "\""
             << ", \"width\": " << p.image.cols
             << ", \"docHeight\": " << p.docHeight
-            << ", \"visit\": {\"firstFrame\": " << p.visit.firstFrame
-            << ", \"lastFrame\": " << p.visit.lastFrame
-            << ", \"tEnter\": " << (p.visit.firstFrame / fps)
-            << ", \"tExit\": " << (p.visit.lastFrame / fps) << "}"
-            << ", \"fixedRects\": [";
+            << ", \"visits\": [";
+        for (size_t v = 0; v < p.visits.size(); ++v) {
+            const auto& t = p.visits[v];
+            out << (v ? ", " : "")
+                << "{\"firstFrame\": " << t.visit.firstFrame
+                << ", \"lastFrame\": " << t.visit.lastFrame
+                << ", \"tEnter\": " << (t.visit.firstFrame / fps)
+                << ", \"tExit\": " << (t.visit.lastFrame / fps)
+                << ", \"vtStart\": " << t.vt_start << "}";
+        }
+        out << "], \"fixedRects\": [";
         for (size_t k = 0; k < p.fixedRects.size(); ++k) {
             const cv::Rect& r = p.fixedRects[k].rect;
             out << (k ? ", " : "")
@@ -77,16 +83,19 @@ bool SessionReport::write(const std::string& path,
     }
     out << "  ],\n";
 
-    // ── Navigations (REVISIT classification arrives with Roadmap M4) ────────
+    // ── Navigations ──────────────────────────────────────────────────────────
     out << "  \"navigations\": [";
-    const auto& navs = session.nav_frames();
+    const auto& navs = session.navigations();
     for (size_t i = 0; i < navs.size(); ++i) {
+        const auto& n = navs[i];
         out << (i ? ", " : "")
-            << "{\"frame\": " << navs[i]
-            << ", \"t\": " << (navs[i] / fps)
-            << ", \"from\": " << i
-            << ", \"to\": " << (i + 1)
-            << ", \"type\": \"NAVIGATE\"}";
+            << "{\"frame\": " << n.frame
+            << ", \"t\": " << (n.frame / fps)
+            << ", \"from\": " << n.from
+            << ", \"to\": " << n.to
+            << ", \"type\": \"" << n.type << "\""
+            << ", \"confidence\": " << n.confidence
+            << ", \"vtStart\": " << n.vtStart << "}";
     }
     out << "],\n";
 

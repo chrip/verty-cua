@@ -23,8 +23,13 @@ The session pipeline (`src/session_processor.*`) first classifies every frame
 transition — `IDENTICAL | SCROLL(dy) | PAGE_CHANGE | UNSTABLE` — while keeping
 an online estimate of the fixed chrome (pixels that stay stable across scroll
 transitions; reset at every page change). A `SessionSegmenter` folds that
-stream into **page visits** (navigation transitions are debounced), and each
-visit is reconstructed by its own `PageStitcher` in three passes:
+stream into **page visits** (navigation transitions are debounced). Every
+visit is then assigned to a page by the `PageRegistry`: a visit whose first
+frame matches a known page's canvas (block voting, `PageIdentifier`) is a
+**REVISIT** — it merges into that page's existing stitch at the recovered
+entry scroll offset (browsers restore scroll on back-navigation, so revisits
+may enter mid-document); otherwise it starts a new page. Each page is
+reconstructed by its `PageStitcher` in three passes per visit:
 
 1. **analyze** — accumulate the position-fixed pixel mask and a rough per-frame
    scroll offset; reduce the mask to header / footer / left / right fixed-band
@@ -107,9 +112,9 @@ benchmark is scored.
 ## Layout
 
 ```
-src/            the tool — SessionProcessor → SessionSegmenter → PageStitcher,
-                TransitionClassifier, ScrollDetector, FixedAccumulator,
-                VideoSource, SessionReport
+src/            the tool — SessionProcessor → SessionSegmenter → PageRegistry
+                (PageIdentifier) → PageStitcher; TransitionClassifier,
+                ScrollDetector, FixedAccumulator, VideoSource, SessionReport
 test_data/      HTML fixtures, session recorder, mp4 muxer, benchmark + results log
 CMakeLists.txt
 ```

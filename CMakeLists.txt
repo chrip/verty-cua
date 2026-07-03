@@ -11,6 +11,8 @@ add_executable(verty
     src/main.cpp
     src/scroll_detector.cpp
     src/fixed_accumulator.cpp
+    src/page_identifier.cpp
+    src/page_registry.cpp
     src/page_stitcher.cpp
     src/session_segmenter.cpp
     src/session_processor.cpp

@@ -54,12 +54,15 @@ SCROLL_TOLERANCE = {"dyErrorSum": 12, "eventCountDiff": 8, "pageChanges": 0}
 # page-0 height -2 / page-1 height 0; fixed bands on the short 282px visit:
 # header -1, footer -1, left +39, right +39 (sidebar over-detection as on the
 # full session — documented non-decision); page-1 bands n/a (no scrolling).
+# Milestone 4 adds navK.type (NAVIGATE|REVISIT, exact) and navK.vtStart for
+# revisits (the entry scroll offset recovered by the page identifier).
 MULTIPAGE_TOLERANCE = {
     "boundaryFrames": 3,     # per navigation, roadmap M3 exit criterion
     "widthPx": 0,
     "heightPx": 32,          # per page, vs what the visit actually saw
     "fixedPx": 48,           # per band, only for visits that scrolled ≥ minScrollForFixed
     "minScrollForFixed": 150,
+    "vtStartPx": 32,         # revisit entry offset vs ground truth
 }
 
 
@@ -181,12 +184,21 @@ def score_multipage(report, gt):
 
     check("pageCount", len(r_pages), len(g_pages), 0)
 
-    # Navigation boundaries: first stable frame per navigation.
+    # Navigation boundaries, types (NAVIGATE|REVISIT) and revisit entry offsets.
     r_navs, g_navs = report.get("navigations", []), gt["navigations"]
     check("navCount", len(r_navs), len(g_navs), 0)
+    visited = {gt["visits"][0]["page"]} if gt.get("visits") else {0}
     for k, gnav in enumerate(g_navs):
-        got = r_navs[k]["frame"] if k < len(r_navs) else -999
-        check(f"nav{k}.boundary", got, gnav["firstStableFrame"], T["boundaryFrames"])
+        rnav = r_navs[k] if k < len(r_navs) else {}
+        check(f"nav{k}.boundary", rnav.get("frame", -999), gnav["firstStableFrame"], T["boundaryFrames"])
+
+        expected_type = "REVISIT" if gnav["toPage"] in visited else "NAVIGATE"
+        visited.add(gnav["toPage"])
+        check(f"nav{k}.type", 0 if rnav.get("type") == expected_type else 1, 0, 0)
+
+        if expected_type == "REVISIT":
+            gt_vt = gt["frames"][gnav["firstStableFrame"]]["scrollY"]
+            check(f"nav{k}.vtStart", rnav.get("vtStart", -999), gt_vt, T["vtStartPx"])
 
     # Per-page geometry vs what the visit actually SAW (not the full page —
     # content never scrolled to is unknowable).

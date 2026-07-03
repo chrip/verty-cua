@@ -1,20 +1,19 @@
 #pragma once
 #include "types.hpp"
 #include "fixed_accumulator.hpp"
-#include "page_stitcher.hpp"
+#include "page_registry.hpp"
 #include "session_segmenter.hpp"
 #include <string>
 #include <vector>
 
-// Orchestrates a whole session (Roadmap M3):
+// Orchestrates a whole session (Roadmap M3 + M4):
 //
-//   1. Classify every frame transition (session pass, no fixed mask yet).
+//   1. Classify every frame transition (session pass with an online chrome
+//      estimate, reset at each page change).
 //   2. Segment the transition stream into page visits (SessionSegmenter).
-//   3. Run one PageStitcher per visit — each reconstructs its page's
-//      full-page screenshot and reports its scroll events / fixed rects.
-//
-// One page visit per detected page; REVISIT recognition (merging a returning
-// page into its earlier stitch) is Roadmap M4.
+//   3. Assign every visit to a page (PageRegistry): a visit whose first frame
+//      matches a known page's canvas is a REVISIT and merges into that page's
+//      stitch at the recovered entry offset; otherwise it starts a new page.
 class SessionProcessor {
 public:
     explicit SessionProcessor(std::string video_path, bool verbose = false);
@@ -24,18 +23,27 @@ public:
     // Runs the whole pipeline; returns false if nothing could be processed.
     [[nodiscard]] bool run();
 
-    // One reconstructed page (valid after run()).
+    // One reconstructed DISTINCT page (valid after run()).
     struct PageResult {
-        PageVisit visit;
-        cv::Mat   image;
-        long      docHeight = 0;
+        cv::Mat image;
+        long    docHeight = 0;
         std::vector<FixedRect>   fixedRects;
-        std::vector<ScrollEvent> scrollEvents;   // global frames / timestamps
+        std::vector<ScrollEvent> scrollEvents;            // global frames / timestamps
+        std::vector<PageStitcher::VisitTrace> visits;     // all visits of this page
+    };
+
+    // One navigation between visits.
+    struct NavEvent {
+        long        frame = 0;        // first stable frame of the new visit
+        int         from = 0, to = 0; // page ids
+        std::string type;             // "NAVIGATE" | "REVISIT"
+        double      confidence = 0.0; // identifier vote fraction (REVISIT)
+        long        vtStart = 0;      // entry scroll offset (REVISIT)
     };
 
     // ── Session outputs (valid after run()) ─────────────────────────────────
     [[nodiscard]] const std::vector<PageResult>& pages() const { return pages_; }
-    [[nodiscard]] const std::vector<long>& nav_frames() const { return nav_frames_; }
+    [[nodiscard]] const std::vector<NavEvent>& navigations() const { return navigations_; }
     [[nodiscard]] const TransitionCounts& transition_counts() const { return counts_; }
 
     [[nodiscard]] long   frame_count() const { return frame_count_; }
@@ -55,9 +63,12 @@ private:
     TransitionClassifier    classifier_;
     TransitionCounts        counts_;       // session-level (segmentation pass)
     std::vector<PageResult> pages_;
-    std::vector<long>       nav_frames_;
+    std::vector<NavEvent>   navigations_;
 
     // Session pass: classification of the transition into every frame
     // (index 0 is a placeholder).
     [[nodiscard]] std::vector<Transition> classify_transitions();
+
+    // The visit's first stable frame, grayscale (for page identification).
+    [[nodiscard]] cv::Mat read_frame_gray(long index) const;
 };

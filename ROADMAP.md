@@ -207,11 +207,36 @@ comparably to the single-page benchmark; single-page benchmark unchanged.
 
 ---
 
-## Milestone 4 — Page identity: REVISIT recognition + stitch merging
+## Milestone 4 — Page identity: REVISIT recognition + stitch merging ✅ (2026-07-03)
 
 **Goal:** recognize a page the session has seen before; merge the revisit into
 the existing stitch. Navigation events are classified as **`NAVIGATE`** (first
 time this page is seen) or **`REVISIT`** (known page) — nothing more.
+
+**Status: done.** `PageIdentifier` (frame-vs-canvas block voting) +
+`PageRegistry` (visit assignment, merge); `PageStitcher` reworked to
+multi-visit (`add_visit(visit, vt_start)` + merged `reconstruct()`). Fixture:
+`--plan revisit` (page 1 → page 2 → **history back**, which restored the
+scroll — the revisit enters mid-document at 588 px). Measured exit criteria
+(totalError 166 px, all checks pass): 2 stitches for 3 visits; `nav1` =
+REVISIT with **vtStart error 0 px** and boundary error 0; merged page-0
+height −4 px vs everything both visits saw; zero false merges (multipage
+session's page 2 vs page 1: below confidence threshold). Two findings en
+route, both measured and fixed:
+- **False scroll on the back-navigation** — periodic content let a bogus dy
+  win the vote histogram, so the PAGE_CHANGE never fired. Fix: a `Scroll`
+  classification must also *explain* the transition (shift-and-compare
+  residual ≤ `SCROLL_RESIDUAL_MAX`; measured ≤ 0.04 for true scrolls vs 0.27
+  for the false one).
+- **1-px chrome banding** — a band under-detected by 1 px made every frame
+  write a row of header chrome at a different document row. Fix:
+  `INTERIOR_ROW_MARGIN` crops the stitched interior a few rows inside the
+  bands; the header/footer stamps extend by the same margin from the
+  shallowest/deepest frame (row-diff artifact metric 29.3 → 11.4 ≈ the
+  single-session reference).
+- Deviation: the dHash pre-filter was **not** implemented — with the session
+  page counts we have, the full block match is the measurable path; add the
+  pre-filter when a corpus with many pages makes it measurable.
 
 **New classes:** `PageRegistry` (owns `PageRecord {id, fingerprint,
 PageStitcher, visits[]}`), `PageIdentifier`.

@@ -57,6 +57,17 @@ std::vector<Transition> SessionProcessor::classify_transitions()
     return transitions;
 }
 
+// ── read_frame_gray ───────────────────────────────────────────────────────────
+cv::Mat SessionProcessor::read_frame_gray(long index) const
+{
+    VideoSource video(video_path_);
+    VideoSource::Frame f;
+    if (!video.ok() || !video.skip_to(index) || !video.next(f)) return {};
+    cv::Mat gray;
+    cv::cvtColor(f.bgr, gray, cv::COLOR_BGR2GRAY);
+    return gray;
+}
+
 // ── run ───────────────────────────────────────────────────────────────────────
 bool SessionProcessor::run()
 {
@@ -67,7 +78,6 @@ bool SessionProcessor::run()
     if (frame_count_ == 0) return false;
 
     const SessionSegmenter::Result seg = SessionSegmenter{}.segment(transitions);
-    nav_frames_ = seg.navFrames;
 
     if (verbose_) {
         std::cout << "[session] frames=" << frame_count_
@@ -81,17 +91,31 @@ bool SessionProcessor::run()
         std::cout << "\n";
     }
 
-    pages_.clear();
+    // Assign every visit to a page (REVISIT merges, NAVIGATE starts a page).
+    PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_);
+    navigations_.clear();
+    int prev_page = 0;
     for (size_t i = 0; i < seg.visits.size(); ++i) {
-        PageStitcher stitcher(video_path_, seg.visits[i],
-                              frame_w_, frame_h_, fps_,
-                              verbose_, static_cast<int>(i));
+        const PageVisit& visit = seg.visits[i];
+        const cv::Mat first_gray = read_frame_gray(visit.firstFrame);
+        if (first_gray.empty()) continue;
+
+        const PageRegistry::Assignment a = registry.assign(visit, first_gray);
+        if (i > 0)
+            navigations_.push_back({visit.firstFrame, prev_page, a.pageId,
+                                    a.navType, a.confidence, a.vtStart});
+        prev_page = a.pageId;
+    }
+
+    // Collect the distinct pages.
+    pages_.clear();
+    for (const PageRegistry::PageRecord& rec : registry.records()) {
         PageResult page;
-        page.visit        = seg.visits[i];
-        page.image        = stitcher.run();
-        page.docHeight    = stitcher.doc_height();
-        page.fixedRects   = stitcher.fixed_rects();
-        page.scrollEvents = stitcher.scroll_events();
+        page.image        = rec.canvas;
+        page.docHeight    = rec.stitcher->doc_height();
+        page.fixedRects   = rec.stitcher->fixed_rects();
+        page.scrollEvents = rec.stitcher->scroll_events();
+        page.visits       = rec.stitcher->visits();
         pages_.push_back(std::move(page));
     }
 

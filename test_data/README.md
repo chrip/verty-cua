@@ -74,6 +74,22 @@ Its `ground_truth.json` uses the **multi-page schema**: `pages[]` (per page:
 click, pageLoaded), and `navigations[]` (`{fromPage, toPage, clickFrame,
 firstStableFrame}`).
 
+### Recording the revisit session (Milestone-4 fixture)
+
+```bash
+node record_session.mjs --plan revisit         # → session_revisit/
+python3 frames_to_mp4.py session_revisit
+```
+
+Page 1 → scroll → click to page 2 → scroll → **history back** to page 1
+(the browser restores the scroll position, so the revisit enters
+mid-document) → scroll deeper than the first visit. Ground truth adds
+`visits[]` (chronological, with `arrivedBy: initial|click|back`); `pages[]`
+are unique pages. Scored additionally on `navK.type` (NAVIGATE|REVISIT) and
+`navK.vtStart` (the recovered entry offset). Baseline (2026-07-03):
+totalError 166 px — REVISIT recognized, vtStart error 0, merged page-0
+height −4 px.
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit
