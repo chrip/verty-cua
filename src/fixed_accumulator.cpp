@@ -27,3 +27,4 @@ cv::Mat FixedAccumulator::mask() const
     cv::compare(counter_, FIXED_CONFIRM_FRAMES, m, cv::CMP_GE);
     return m;
 }
+

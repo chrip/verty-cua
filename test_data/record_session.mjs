@@ -44,12 +44,14 @@ const argv = process.argv.slice(2);
 let PLAN_NAME = 'single';
 const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
-if (!['single', 'multipage', 'revisit'].includes(PLAN_NAME)) {
-  console.error(`unknown plan: ${PLAN_NAME} (use single|multipage|revisit)`);
+if (!['single', 'multipage', 'revisit', 'hostile'].includes(PLAN_NAME)) {
+  console.error(`unknown plan: ${PLAN_NAME} (use single|multipage|revisit|hostile)`);
   process.exit(1);
 }
-const DEFAULT_OUT = { single: 'session_page1', multipage: 'session_multipage', revisit: 'session_revisit' };
-const PAGE_FILE = resolve(argv[0] || join(HERE, 'scroll_page.html'));
+const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
+                       revisit: 'session_revisit', hostile: 'session_hostile' };
+const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html' };
+const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
 const OUT_DIR   = resolve(argv[1] || join(HERE, DEFAULT_OUT[PLAN_NAME]));
 const FRAMES_DIR = join(OUT_DIR, 'frames');
 
@@ -258,12 +260,36 @@ async function runSingle() {
     plan: resolvedPlan,
     fixed: gt.fixed,
     regions: gt.regions,
+    dynamicRegions: gt.dynamicRegions || [],
     frames,
   };
   writeFileSync(join(OUT_DIR, 'ground_truth.json'), JSON.stringify(meta, null, 2));
   console.log(`\n✔ ${frames.length} frames → ${FRAMES_DIR}`);
   console.log(`✔ ground truth → ${join(OUT_DIR, 'ground_truth.json')}`);
   console.log(`  trajectory: scrollRange [${minY}, ${maxY}]px, reachedBottom=${maxY >= maxScrollY}, maxGap=${maxGap}px`);
+
+  // Reference render for perceptual scoring: the browser's own full-page
+  // screenshot, captured AFTER the session so it cannot disturb the frames.
+  // The fixed chrome is HIDDEN for the capture: captureBeyondViewport renders
+  // position:fixed elements once at their viewport position (a footer would
+  // land mid-image), which is meaningless in document coordinates. Hiding
+  // fixed elements does not change layout, so fullpage.png is the pure
+  // scrolling document — exactly what the stitch interior is scored against.
+  if (PLAN_NAME === 'hostile') {
+    await evaluate('window.scrollTo(0, 0)');
+    await evaluate(`document.querySelectorAll(
+        '[data-region="header"],[data-region="footer"],[data-region="left"],' +
+        '[data-region="right"],#back-to-top')
+      .forEach(el => el.style.display = 'none')`);
+    await sleep(200);
+    const { data } = await call('Page.captureScreenshot', {
+      format: 'png',
+      clip: { x: 0, y: 0, width: VIEWPORT_W, height: gt.page.pageHeight, scale: 1 },
+      captureBeyondViewport: true,
+    });
+    writeFileSync(join(OUT_DIR, 'fullpage.png'), Buffer.from(data, 'base64'));
+    console.log(`✔ content reference (chrome hidden) → ${join(OUT_DIR, 'fullpage.png')} (${VIEWPORT_W}×${gt.page.pageHeight})`);
+  }
 }
 
 // ── Multi-page session runner (plans: multipage, revisit) ────────────────────
@@ -412,7 +438,7 @@ try {
 
   if      (PLAN_NAME === 'multipage') await runSession(MULTIPAGE_PLAN);
   else if (PLAN_NAME === 'revisit')   await runSession(REVISIT_PLAN);
-  else                                await runSingle();
+  else                                await runSingle();   // single + hostile
 } catch (e) {
   console.error('record failed:', e.message);
   process.exitCode = 1;

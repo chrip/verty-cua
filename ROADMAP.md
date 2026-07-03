@@ -269,10 +269,46 @@ content); zero false merges on a session of two *different-but-similar* pages.
 
 ---
 
-## Milestone 5 — Smart-stitch quality: anti-ghosting & dynamic content
+## Milestone 5 — Smart-stitch quality: anti-ghosting & dynamic content ✅ (2026-07-04, first pass)
 
 **Goal:** the "smart" in smart screenshot — no duplicated footers, no smeared
 animations, no scrollbar streaks, on the real-world corpus, not just fixtures.
+
+**Status: done for the fixture scope.** New hostile fixture
+(`scroll_page_hostile.html` + `--plan hostile`): a continuously animating
+region (sliding gradient + spinner) and a floating fixed button that appears
+only after 300px of scrolling. Recorder captures a **chrome-hidden full-page
+reference render** (`fullpage.png`; position:fixed elements are hidden for the
+capture because `captureBeyondViewport` would render them once at viewport
+coordinates — mid-image footer); the benchmark scores a **ghost metric**:
+per-16px-block MAD vs the reference, locally aligned per block-row within
+±12px (scroll drift is not ghosting), animated bboxes excluded. Journey
+(measured at every step): baseline was catastrophic — the animation caused 7
+false PAGE_CHANGEs and vetoed true scrolls (dyErrorSum 512). Fixes:
+- **Scroll veto redesigned**: `scroll_explains` now measures, per 32px band,
+  the fraction of *unshifted-changed* pixels still unexplained after the dy
+  shift, and takes the **median** band. Chrome/whitespace drop out of the
+  denominator (no mask needed); a bounded animated region only dirties its
+  own bands. Measured: true scrolls ≤ 0.002, false scrolls 0.114/0.999.
+  The veto also **rescues weak-vote true scrolls** (animation steals histogram
+  votes, breaking the dominance gate): the histogram proposes, the veto decides.
+  (A viewport-space dynamic-pixel mask was tried and rejected: animation moves
+  through the viewport while scrolling; the union over pause positions poisons
+  the detector.)
+- **Conflict-frozen writes** in reconstruct: a stitched row is refreshed only
+  if the new observation agrees (within ±2px drift); inexplicable conflicts =
+  dynamic content, frozen at first observation. The animated region lands as
+  ONE coherent instant; the floating button's smear collapses to 2–3 small
+  remnants (1.13% bad blocks).
+- **Interior margin 4→12px** + sidebar-replication trim: chrome **drop
+  shadows** (6px box-shadow) blend with scrolling content next to
+  under-detected bands — they smeared shadow lines at every scroll step and a
+  replicated shadow row painted a dark column down the page.
+Result: ghost madMean 3.84 / badBlocks 1.13% (tolerances 6.0 / 2%); friendly
+sessions unregressed (99/82/166). **Remaining M5 work** (needs new fixtures):
+scrollbar-thumb exclusion (thin-column sub-row granularity), conditionally-
+fixed overlay extraction (stamp the button once instead of remnants), and
+validation on the real-world corpus.
 
 **Known ghosting sources & algorithm drafts:**
 - **Conditionally-fixed elements** (sticky header that appears only after

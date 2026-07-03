@@ -27,3 +27,4 @@ public:
 private:
     cv::Mat counter_;   // frame_h × frame_w, CV_32SC1
 };
+

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stitching Test Page — HOSTILE (dynamic content + conditional fixed)</title>
+<style>
+  /* Same chrome layout as scroll_page.html: header 72, footer 56, left 240,
+     right 180 — plus two hostile ingredients:
+       1. #back-to-top  — a floating fixed button that APPEARS only after
+                          scrolling 300px (conditionally-fixed element).
+       2. .animated     — a continuously animating region in the content
+                          (changes every frame — must not ghost/tear). */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --header-h: 72px; --footer-h: 56px; --left-w: 240px; --right-w: 180px; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color: #1f2733; background: #eef1f5; line-height: 1.55; }
+
+  #site-header { position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
+    background: #1b3a5b; color: #fff; display: flex; align-items: center; gap: 20px;
+    padding: 0 24px; z-index: 40; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+  #site-header .logo { font-weight: 700; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+  #site-header .logo .mark { width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg, #fa5a5a, #ff9500); }
+  #site-header nav { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+  #site-header nav a { color: #cfe0f2; text-decoration: none; }
+
+  #site-footer { position: fixed; bottom: 0; left: 0; right: 0; height: var(--footer-h);
+    background: #14202e; color: #9fb1c4; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 24px; font-size: 13px; z-index: 40; }
+
+  #left-sidebar { position: fixed; top: var(--header-h); bottom: var(--footer-h); left: 0;
+    width: var(--left-w); background: #223146; color: #d7e1ee; padding: 18px 14px;
+    overflow: hidden; z-index: 30; }
+  #left-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #7f93ab; margin-bottom: 12px; }
+  #left-sidebar div.item { padding: 10px 12px; border-radius: 6px; margin-bottom: 4px;
+    font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  #left-sidebar div.item .ico { width: 18px; height: 18px; border-radius: 4px; background: #3f5872; }
+
+  #right-sidebar { position: fixed; top: var(--header-h); bottom: var(--footer-h); right: 0;
+    width: var(--right-w); background: #ffffff; border-left: 1px solid #d9e0e8;
+    padding: 18px 14px; overflow: hidden; z-index: 30; }
+  #right-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #8a97a6; margin-bottom: 12px; }
+  #right-sidebar .widget { background: #f3f6fa; border: 1px solid #e3e9f0; border-radius: 8px;
+    padding: 12px; margin-bottom: 12px; font-size: 13px; color: #45505f; }
+
+  #scroll-content { margin: var(--header-h) var(--right-w) var(--footer-h) var(--left-w);
+    padding: 32px 40px 60px; background: #ffffff;
+    min-height: calc(100vh - var(--header-h) - var(--footer-h)); }
+  #scroll-content h1 { font-size: 30px; margin-bottom: 6px; color: #14202e; }
+  #scroll-content .lead { color: #55636f; font-size: 16px; margin-bottom: 28px; }
+  #scroll-content section { margin-bottom: 40px; }
+  #scroll-content h2 { font-size: 22px; margin: 28px 0 10px; color: #1b3a5b;
+    border-bottom: 2px solid #e6ecf2; padding-bottom: 6px; }
+  #scroll-content p { margin-bottom: 14px; color: #333c47; }
+
+  .img-placeholder { width: 100%; height: 200px; border-radius: 8px; margin: 14px 0;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    font-size: 14px; font-weight: 600; background-color: #8fa3b8;
+    background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.12) 0,
+      rgba(255,255,255,.12) 12px, transparent 12px, transparent 24px); }
+  .img-placeholder.a { background-color: #6c8ebf; }
+  .img-placeholder.b { background-color: #7aa06f; }
+
+  /* HOSTILE 1: continuously animated region (sliding gradient + spinner). */
+  .animated { position: relative; height: 160px; border-radius: 8px; margin: 14px 0;
+    overflow: hidden;
+    background: linear-gradient(90deg, #ff9500, #fa5a5a, #af52de, #007aff, #ff9500);
+    background-size: 300% 100%;
+    animation: slide 1.2s linear infinite; }
+  @keyframes slide { from { background-position: 0% 0; } to { background-position: 300% 0; } }
+  .animated .spinner { position: absolute; left: 50%; top: 50%; margin: -28px 0 0 -28px;
+    width: 56px; height: 56px; border-radius: 50%;
+    border: 8px solid rgba(255,255,255,.35); border-top-color: #fff;
+    animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* HOSTILE 2: floating fixed button, appears only after scrolling 300px. */
+  #back-to-top { position: fixed; right: calc(var(--right-w) + 24px); bottom: 90px;
+    z-index: 35; padding: 12px 18px; border-radius: 24px; background: #007aff;
+    color: #fff; font-weight: 600; font-size: 14px; box-shadow: 0 6px 16px rgba(0,0,0,.3);
+    display: none; }
+  #back-to-top.visible { display: block; }
+</style>
+</head>
+<body>
+
+  <header id="site-header" data-region="header">
+    <span class="logo"><span class="mark"></span> HostileDocs</span>
+    <nav><a href="#">Overview</a><a href="#">Guides</a><a href="#">Support</a></nav>
+  </header>
+
+  <aside id="left-sidebar" data-region="left">
+    <h2>Navigation</h2>
+    <div class="item"><span class="ico"></span> Overview</div>
+    <div class="item"><span class="ico"></span> Dynamic content</div>
+    <div class="item"><span class="ico"></span> Sticky elements</div>
+    <div class="item"><span class="ico"></span> Ghosting</div>
+    <div class="item"><span class="ico"></span> Provenance</div>
+    <div class="item"><span class="ico"></span> Appendix</div>
+  </aside>
+
+  <aside id="right-sidebar" data-region="right">
+    <h2>On this page</h2>
+    <div class="widget">Static text</div>
+    <div class="widget">Animated region</div>
+    <div class="widget">Floating button</div>
+    <div class="widget">More text</div>
+  </aside>
+
+  <main id="scroll-content" data-region="scroll">
+    <h1>Hostile Page: Dynamic Content &amp; Conditional Fixed</h1>
+    <p class="lead">Same chrome as the friendly fixtures — but with a
+      continuously animating region and a floating button that only appears
+      after scrolling. The stitcher must not smear either across the page.</p>
+
+    <section>
+      <h2>1. Static prologue</h2>
+      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+        tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+        veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+        commodo consequat. Duis aute irure dolor in reprehenderit in voluptate.</p>
+      <p>Velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint
+        occaecat cupidatat non proident, sunt in culpa qui officia deserunt
+        mollit anim id est laborum. Curabitur pretium tincidunt lacus.</p>
+      <div class="img-placeholder a">STATIC IMAGE — 100% × 200</div>
+      <p>Nulla facilisi. Nam sed elit at massa vulputate cursus. Vestibulum ante
+        ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.</p>
+    </section>
+
+    <section>
+      <h2>2. The animated region</h2>
+      <p>The block below animates continuously (sliding gradient + spinner) —
+        it looks different in every frame of the recording.</p>
+      <div class="animated" data-dynamic="true"><div class="spinner"></div></div>
+      <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem
+        accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab
+        illo inventore veritatis et quasi architecto beatae vitae dicta sunt.</p>
+      <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut
+        fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem
+        sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor.</p>
+    </section>
+
+    <section>
+      <h2>3. Plain content between the traps</h2>
+      <p>At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis
+        praesentium voluptatum deleniti atque corrupti quos dolores et quas
+        molestias excepturi sint occaecati cupiditate non provident.</p>
+      <div class="img-placeholder b">STATIC IMAGE — 100% × 200</div>
+      <p>Similique sunt in culpa qui officia deserunt mollitia animi, id est
+        laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita
+        distinctio. Nam libero tempore, cum soluta nobis est eligendi optio.</p>
+      <p>Temporibus autem quibusdam et aut officiis debitis aut rerum
+        necessitatibus saepe eveniet ut et voluptates repudiandae sint et
+        molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente.</p>
+    </section>
+
+    <section>
+      <h2>4. Epilogue</h2>
+      <p>While you read this, the floating “↑ Top” button (bottom right of the
+        content) has appeared — it exists only after 300px of scrolling and is
+        position-fixed: a conditionally-fixed element the recording sees at the
+        same viewport spot in many frames, over changing content.</p>
+      <p>Luctus ut, massa. Fusce ac turpis quis ligula lacinia aliquet. Mauris
+        ipsum. Nulla metus metus, ullamcorper vel, tincidunt sed, euismod in,
+        nibh. Quisque volutpat condimentum velit. Class aptent taciti sociosqu.</p>
+      <p>Nam nec ante. Sed lacinia, urna non tincidunt mattis, tortor neque
+        adipiscing diam, a cursus ipsum ante quis turpis. Nulla facilisi. Ut
+        fringilla. Suspendisse potenti. This marks the bottom of the document.</p>
+    </section>
+  </main>
+
+  <button id="back-to-top">↑ Top</button>
+
+  <footer id="site-footer" data-region="footer">
+    <span>© 2026 HostileDocs — Test fixture</span>
+    <span>Fixed footer · always visible</span>
+  </footer>
+
+<script>
+/* Ground-truth instrumentation (same contract as the friendly fixtures) plus
+   dynamicRegions: document-coordinate bboxes of [data-dynamic] elements and a
+   descriptor of the conditionally-fixed button. */
+function r(n) { return Math.round(n * 100) / 100; }
+function docBox(el) {
+  const b = el.getBoundingClientRect();
+  return { x: r(b.left + window.scrollX), y: r(b.top + window.scrollY),
+           width: r(b.width), height: r(b.height) };
+}
+function pageMetrics() {
+  const doc = document.documentElement;
+  return { viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+           pageWidth: Math.max(doc.scrollWidth, doc.clientWidth),
+           pageHeight: Math.max(doc.scrollHeight, doc.clientHeight),
+           maxScrollY: Math.max(doc.scrollHeight - window.innerHeight, 0),
+           devicePixelRatio: window.devicePixelRatio };
+}
+function regionBoxes() {
+  const out = {};
+  document.querySelectorAll('[data-region]').forEach(el => {
+    out[el.getAttribute('data-region')] = docBox(el);
+  });
+  return out;
+}
+function dynamicRegions() {
+  const out = [];
+  document.querySelectorAll('[data-dynamic]').forEach(el =>
+    out.push({ kind: 'animated', doc: docBox(el) }));
+  const btn = document.getElementById('back-to-top');
+  const b = btn.getBoundingClientRect();   // viewport coords (position:fixed)
+  out.push({ kind: 'conditional-fixed', appearsAfterScrollY: 300,
+             viewport: { x: r(b.left), y: r(b.top), width: r(b.width), height: r(b.height) } });
+  return out;
+}
+function logGroundTruth() {
+  const metrics = pageMetrics();
+  const regions = regionBoxes();
+  const groundTruth = {
+    page: metrics, regions,
+    dynamicRegions: dynamicRegions(),
+    fixed: { headerHeight: regions.header ? regions.header.height : 0,
+             footerHeight: regions.footer ? regions.footer.height : 0,
+             leftWidth: regions.left ? regions.left.width : 0,
+             rightWidth: regions.right ? regions.right.width : 0 },
+  };
+  console.log('[GROUND TRUTH]', groundTruth);
+  window.GROUND_TRUTH = groundTruth;
+  return groundTruth;
+}
+
+/* The conditionally-fixed button: visible only after 300px of scrolling. */
+const btn = document.getElementById('back-to-top');
+window.addEventListener('scroll', () => {
+  btn.classList.toggle('visible', window.scrollY > 300);
+}, { passive: true });
+
+window.addEventListener('load', () => {
+  window.scrollTo(0, 0);
+  logGroundTruth();
+});
+</script>
+</body>
+</html>

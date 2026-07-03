@@ -73,7 +73,7 @@ private:
     int         page_id_;
 
     TransitionClassifier classifier_;
-    FixedAccumulator     accumulator_;   // shared across all visits of the page
+    FixedAccumulator     accumulator_;   // chrome evidence, shared by all visits
     std::vector<VisitTrace> visits_;
     long max_vt_ = 0;                    // deepest viewport top over all visits
     long min_vt_ = -1;                   // shallowest (-1 = none yet)

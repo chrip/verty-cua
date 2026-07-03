@@ -10,20 +10,32 @@ constexpr int SAD_THRESHOLD = 18;       // max mean absolute diff to call a matc
 constexpr int FIXED_CONFIRM_FRAMES = 6; // stable scroll events before a pixel is FIXED
 constexpr double IDENTICAL_FRAME_MAD = 2.0;      // below: duplicate frame / pause
 constexpr double PAGE_CHANGE_MIN_FRACTION = 0.4; // changed-area fraction ⇒ new page
-// A detected scroll dy must also EXPLAIN the transition: after shifting the
-// previous frame by dy, at most this fraction of the (non-fixed, overlapping)
-// area may still differ. Guards against false scrolls on page changes, where
-// periodic content (stripes, text lines) can win the vote histogram.
-// Measured: true scrolls ≤ 0.04, false scroll on a page change 0.27.
-constexpr double SCROLL_RESIDUAL_MAX = 0.15;
+// A detected scroll dy must also EXPLAIN the transition. After shifting the
+// previous frame by dy, the overlap is cut into horizontal bands and each
+// band's changed fraction is measured; the MEDIAN band must be nearly clean.
+// The median is robust against a bounded animated region (which only pollutes
+// its own bands) while a false dy on a page change leaves most bands dirty.
+// Measured: true scrolls (animation raging in view) median 0.000; false
+// scrolls 0.081 and 0.909.
+constexpr double SCROLL_RESIDUAL_MEDIAN_MAX = 0.05;
+constexpr int    RESIDUAL_BAND_H = 32;   // band height (px) for the median
 
 // The stitched interior is cropped this many rows inside the detected
-// header/footer bands. If a band is under-detected by a pixel or two, every
-// frame would otherwise write that chrome residue at a different document row
-// — a thin line at every scroll step. The header/footer stamps are extended
-// by the same margin (sourced from the shallowest/deepest frame, where those
-// rows show the correct adjacent content), so no gap remains.
-constexpr int INTERIOR_ROW_MARGIN = 4;
+// header/footer bands, for two reasons: (a) a band under-detected by a pixel
+// or two would smear a chrome line at every scroll step; (b) chrome drop
+// shadows (e.g. a 6px header box-shadow) darken the adjacent content rows —
+// pixels that are neither stable (they blend with scrolling content) nor
+// clean content, and would poison every write's edge rows. The margin must
+// clear the shadow. The header/footer stamps are extended by the same margin
+// (sourced from the shallowest/deepest frame, where those rows show the
+// correct adjacent content), so no gap remains.
+constexpr int INTERIOR_ROW_MARGIN = 12;
+
+// When an incoming frame write disagrees with already-stitched rows by more
+// than this (mean abs diff per row), the existing rows are kept — dynamic
+// content (animation, floating buttons) is frozen at its first observation
+// instead of being smeared across the page.
+constexpr double ROW_CONFLICT_MAD = 10.0;
 constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-change window
 
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────

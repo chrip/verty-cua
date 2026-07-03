@@ -1,36 +1,60 @@
 #include "transition_classifier.hpp"
+#include <algorithm>
+#include <vector>
 
 // ── scroll_explains ───────────────────────────────────────────────────────────
 // Vote histograms can be fooled by periodic content (stripes, text lines) into
 // a "valid" dy on a page change. A genuine scroll must EXPLAIN the transition:
-// after shifting prev by dy, the overlapping non-fixed area must be nearly
-// unchanged (measured: ≤0.04 for true scrolls, 0.27 for a false one).
+// of the pixels that CHANGED between the frames (unshifted), nearly all must be
+// explained by the dy shift. Restricting to unshifted-changed pixels keeps
+// chrome and whitespace out of the denominator (they never changed), so the
+// check needs no fixed mask; the per-band MEDIAN makes it robust against a
+// bounded animated region, which only dirties its own bands.
+// Measured (maskless): true scrolls ≤ 0.002; false scrolls 0.114 and 0.999.
 bool TransitionClassifier::scroll_explains(const cv::Mat& prev_gray,
                                            const cv::Mat& curr_gray,
-                                           int dy, const cv::Mat& fixed_mask)
+                                           int dy, const cv::Mat& ignore_mask)
 {
     const int H = curr_gray.rows;
+    const int W = curr_gray.cols;
     if (std::abs(dy) >= H) return false;
 
-    // curr(y) corresponds to prev(y + dy); take the overlapping row ranges.
+    // curr(y) corresponds to prev(y + dy); overlapping row ranges.
     const int overlap = H - std::abs(dy);
-    const cv::Rect prev_roi(0, std::max(dy, 0),  curr_gray.cols, overlap);
-    const cv::Rect curr_roi(0, std::max(-dy, 0), curr_gray.cols, overlap);
+    const cv::Rect prev_roi(0, std::max(dy, 0),  W, overlap);
+    const cv::Rect curr_roi(0, std::max(-dy, 0), W, overlap);
 
-    cv::Mat diff, smooth, changed;
-    cv::absdiff(prev_gray(prev_roi), curr_gray(curr_roi), diff);
-    cv::blur(diff, smooth, cv::Size(3, 3));
-    cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+    auto changed_mask = [](const cv::Mat& a, const cv::Mat& b) {
+        cv::Mat diff, smooth, changed;
+        cv::absdiff(a, b, diff);
+        cv::blur(diff, smooth, cv::Size(3, 3));
+        cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+        return changed;
+    };
 
-    double area = static_cast<double>(diff.total());
-    if (!fixed_mask.empty()) {
-        const cv::Mat mask_roi = fixed_mask(curr_roi);
-        changed.setTo(0, mask_roi);
-        area -= cv::countNonZero(mask_roi);
+    // Both in curr coordinates: what changed without the shift, and what still
+    // differs under the dy hypothesis.
+    cv::Mat changed0 = changed_mask(prev_gray(curr_roi), curr_gray(curr_roi));
+    cv::Mat changedS = changed_mask(prev_gray(prev_roi), curr_gray(curr_roi));
+    if (!ignore_mask.empty())
+        changed0.setTo(0, ignore_mask(curr_roi));
+
+    cv::Mat unexplained;
+    cv::bitwise_and(changed0, changedS, unexplained);
+
+    std::vector<double> fracs;
+    for (int y = 0; y + RESIDUAL_BAND_H <= overlap; y += RESIDUAL_BAND_H) {
+        const cv::Rect band(0, y, W, RESIDUAL_BAND_H);
+        const int n = cv::countNonZero(changed0(band));
+        if (n < 200) continue;   // band barely changed — no evidence either way
+        fracs.push_back(static_cast<double>(cv::countNonZero(unexplained(band))) / n);
     }
-    if (area <= 0.0) return false;
+    // A real scroll changes many rows; if nothing changed anywhere, a nonzero
+    // dy claim has no supporting evidence.
+    if (fracs.empty()) return false;
 
-    return cv::countNonZero(changed) / area <= SCROLL_RESIDUAL_MAX;
+    std::nth_element(fracs.begin(), fracs.begin() + fracs.size() / 2, fracs.end());
+    return fracs[fracs.size() / 2] <= SCROLL_RESIDUAL_MEDIAN_MAX;
 }
 
 Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
@@ -42,8 +66,13 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     if (cv::mean(diff)[0] < IDENTICAL_FRAME_MAD)
         return {TransitionType::Identical, 0};
 
+    // The vote histogram proposes a dy; the explained-fraction veto decides.
+    // The proposal is used even when the histogram's own validity gates fail:
+    // animated content steals votes and can break the dominance gate on a
+    // perfectly genuine scroll — the veto is the reliable arbiter for both
+    // false positives AND weak-vote true positives.
     ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
-    if (s.valid && s.dy != 0 && scroll_explains(prev_gray, curr_gray, s.dy, fixed_mask))
+    if (s.dy != 0 && scroll_explains(prev_gray, curr_gray, s.dy, fixed_mask))
         return {TransitionType::Scroll, s.dy};
 
     // No scroll explains the change — measure how much of the scrollable area

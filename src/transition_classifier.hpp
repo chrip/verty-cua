@@ -46,9 +46,11 @@ struct TransitionCounts {
 // classifies single transitions only.
 class TransitionClassifier {
 public:
-    // fixed_mask (optional, CV_8UC1 frame-sized, 255 = fixed): passed through to
-    // the ScrollDetector and used to restrict the changed-area measurement to
-    // scrollable pixels. Empty mask ⇒ whole frame (first pass / one-pass use).
+    // fixed_mask (optional, CV_8UC1, 255 = fixed chrome): excluded from scroll
+    // voting and from the changed-area measurements. Empty ⇒ whole frame
+    // (first pass / one-pass use). Animated content needs no mask: the
+    // explained-fraction veto is median-based and tolerates a bounded animated
+    // region by construction.
     Transition classify(const cv::Mat& prev_gray, const cv::Mat& curr_gray,
                         const cv::Mat& fixed_mask = cv::Mat());
 
@@ -56,8 +58,8 @@ private:
     ScrollDetector scroll_;
 
     // True iff shifting prev by dy leaves at most SCROLL_RESIDUAL_MAX of the
-    // (non-fixed, overlapping) area changed — i.e. the dy explains the frame.
+    // (non-ignored, overlapping) area changed — i.e. the dy explains the frame.
     [[nodiscard]] static bool scroll_explains(const cv::Mat& prev_gray,
                                               const cv::Mat& curr_gray,
-                                              int dy, const cv::Mat& fixed_mask);
+                                              int dy, const cv::Mat& ignore_mask);
 };

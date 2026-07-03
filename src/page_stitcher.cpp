@@ -195,16 +195,23 @@ void PageStitcher::stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const
     }
     case FixedKind::Left:
     case FixedKind::Right: {
-        // A fixed sidebar is present at every scroll offset, so it spans the whole
-        // document height. Paste the captured strip, then replicate its bottom row
-        // (sidebar background) down to the footer line.
-        src.copyTo(canvas(cv::Rect(r.x, r.y, r.width, r.height)));
-        int fill_bottom = static_cast<int>(doc_h) - (frame_h_ - (r.y + r.height));
-        int fill_count  = fill_bottom - (r.y + r.height);
+        // A fixed sidebar is present at every scroll offset, so it spans the
+        // whole document height. The strip's bottom rows are trimmed by the
+        // interior margin — an under-detected footer leaves its drop shadow
+        // right above the band, and replicating a shadowed row would paint a
+        // dark column down the page. The row above the trim is shadow-free.
+        const int trim = std::min(INTERIOR_ROW_MARGIN, r.height - 1);
+        const cv::Rect band(r.x, r.y, r.width, r.height - trim);
+        src_frame(band).copyTo(canvas(cv::Rect(band.x, band.y, band.width, band.height)));
+
+        const int fill_top    = band.y + band.height;
+        const int fill_bottom = static_cast<int>(doc_h) - (frame_h_ - (r.y + r.height));
+        const int fill_count  = fill_bottom - fill_top;
         if (fill_count > 0) {
             cv::Mat tail;
-            cv::repeat(src.row(r.height - 1), fill_count, 1, tail);
-            tail.copyTo(canvas(cv::Rect(r.x, r.y + r.height, r.width, fill_count)));
+            cv::repeat(src_frame.row(band.y + band.height - 1).colRange(r.x, r.x + r.width),
+                       fill_count, 1, tail);
+            tail.copyTo(canvas(cv::Rect(r.x, fill_top, r.width, fill_count)));
         }
         break;
     }
@@ -238,6 +245,27 @@ cv::Mat PageStitcher::reconstruct()
                             frame_h_ - header_h_ - footer_h_ - 2 * m);
     if (interior.width <= 0 || interior.height <= 0) return canvas;
 
+    // Conflict-frozen writes: a document row, once stitched, is refreshed by a
+    // later frame only if the frames agree on it — where "agree" tolerates a
+    // small vertical drift (a row matching the canvas within ±2px is scroll
+    // accumulation error, not new content, and refreshing keeps each write
+    // self-consistent). A row that matches at NO nearby offset holds dynamic
+    // content (animation, a floating button over changing text) and is frozen
+    // at its first observation instead of being smeared across the page.
+    auto row_mad = [&](const cv::Mat& a, const cv::Mat& b) {
+        return cv::norm(a, b, cv::NORM_L1) / (3.0 * interior.width);
+    };
+    auto explainable = [&](const cv::Mat& incoming_row, int doc_row) {
+        for (int s = -2; s <= 2; ++s) {
+            const int y = doc_row + s;
+            if (y < 0 || y >= static_cast<int>(doc_h)) continue;
+            if (row_mad(incoming_row, canvas(cv::Rect(interior.x, y, interior.width, 1)))
+                    <= ROW_CONFLICT_MAD)
+                return true;
+        }
+        return false;
+    };
+    std::vector<uint8_t> row_written(static_cast<size_t>(doc_h), 0);
     for (const VisitTrace& trace : visits_) {
         VideoSource video = open_at(trace.visit);
         if (!video.ok()) continue;
@@ -249,9 +277,20 @@ cv::Mat PageStitcher::reconstruct()
                           ? trace.vt_by_frame[local]
                           : (trace.vt_by_frame.empty() ? 0 : trace.vt_by_frame.back());
             vt = std::max(0L, vt);
-            int dst_y = static_cast<int>(vt) + interior.y;
+            const int dst_y = static_cast<int>(vt) + interior.y;
             if (dst_y + interior.height > static_cast<int>(doc_h)) continue;   // safety
-            f.bgr(interior).copyTo(canvas(cv::Rect(interior.x, dst_y, interior.width, interior.height)));
+
+            const cv::Mat incoming = f.bgr(interior);
+            for (int row = 0; row < interior.height; ++row) {
+                const int doc_row = dst_y + row;
+                cv::Mat dst = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
+                if (row_written[doc_row]
+                    && row_mad(incoming.row(row), dst) > ROW_CONFLICT_MAD
+                    && !explainable(incoming.row(row), doc_row))
+                    continue;   // dynamic content: keep the first observation
+                incoming.row(row).copyTo(dst);
+                row_written[doc_row] = 1;
+            }
         }
     }
 

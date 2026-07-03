@@ -35,6 +35,9 @@ Usage:
 import os, sys, json, subprocess
 from datetime import datetime, timezone
 
+import cv2
+import numpy as np
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 BINARY = os.path.join(REPO, "build", "verty")
@@ -109,6 +112,87 @@ def gt_scroll_events(gt):
         if d:
             ev[i] = d
     return ev
+
+
+# Ghost-score tolerances (Milestone 5): mean 16×16-block MAD between the
+# stitch interior and the browser's chrome-hidden full-page render
+# (fullpage.png), locally aligned per block-row (drift is not ghosting),
+# animated regions excluded. Baseline measured 2026-07-04 on session_hostile:
+# madMean=3.84, badBlockFrac=1.13% (floating-button remnants). Tolerances =
+# baseline + margin.
+GHOST_TOLERANCE = {"madMean": 6.0, "badBlockFrac": 0.02}
+
+
+def score_ghost(gt, session, stitch_png):
+    """Perceptual ghosting score vs the browser's full-page reference render.
+    Returns None when the session has no fullpage.png."""
+    ref_path = os.path.join(session, "fullpage.png")
+    if not os.path.exists(ref_path):
+        return None
+    ref = cv2.imread(ref_path)
+    stitch = cv2.imread(stitch_png)
+    if ref is None or stitch is None:
+        return None
+
+    vw, vh = gt["viewport"]["width"], gt["viewport"]["height"]
+    f = gt["fixed"]
+    x0, x1 = int(f["leftWidth"]), vw - int(f["rightWidth"])
+    y0 = int(f["headerHeight"]) + 8
+    y1 = min(ref.shape[0], stitch.shape[0]) - int(f["footerHeight"]) - 8
+
+    # Valid-pixel mask in document coordinates (True = scored). The reference
+    # is the pure scrolling document (chrome hidden at capture), so only the
+    # content interior is compared — chrome columns/rows are cropped away.
+    valid = np.zeros((y1, x1), dtype=bool)
+    valid[y0:y1, x0:x1] = True
+    # Animated regions are legitimately different (another animation instant).
+    for d in gt.get("dynamicRegions", []):
+        if d.get("kind") == "animated":
+            b = d["doc"]
+            ya, yb = max(0, int(b["y"]) - 8), min(y1, int(b["y"] + b["height"]) + 8)
+            xa, xb = max(0, int(b["x"]) - 8), min(x1, int(b["x"] + b["width"]) + 8)
+            valid[ya:yb, xa:xb] = False
+
+    g_ref    = cv2.cvtColor(ref[:y1, :x1],    cv2.COLOR_BGR2GRAY).astype(np.int16)
+    g_stitch = cv2.cvtColor(stitch[:y1, :x1], cv2.COLOR_BGR2GRAY).astype(np.int16)
+
+    # Per-block MAD with LOCAL vertical alignment: scroll-accumulation drift
+    # grows along the page (measured ~8px at the bottom) and is visually
+    # invisible, so each 16px block-row is scored at its own best shift within
+    # ±12px. Structural ghosting (smears, torn/mixed frames) cannot be shifted
+    # away and still scores high.
+    B, S = 16, 12
+    H, W = (y1 // B) * B, (x1 // B) * B
+    per_shift = []
+    for shift in range(-S, S + 1):
+        r = np.roll(g_ref, shift, axis=0)
+        diff = np.abs(r - g_stitch).astype(np.float64)
+        diff[~valid] = np.nan
+        blocks = diff[:H, :W].reshape(H // B, B, W // B, B).transpose(0, 2, 1, 3)
+        with np.errstate(invalid="ignore"):
+            per_shift.append(np.nanmean(blocks.reshape(H // B, W // B, -1), axis=2))
+    stack = np.stack(per_shift)                      # (shifts, rows, cols)
+    with np.errstate(invalid="ignore"):
+        row_mean = np.nanmean(stack, axis=2)         # (shifts, rows)
+    row_mean[np.isnan(row_mean)] = np.inf
+    best_shift = row_mean.argmin(axis=0)             # per block-row
+    bmad = np.take_along_axis(stack, best_shift[None, :, None], axis=0)[0]
+    bmad = bmad[~np.isnan(bmad)]
+    if bmad.size == 0:
+        return None
+
+    m = {
+        "madMean":      round(float(bmad.mean()), 2),
+        "madWorst":     round(float(bmad.max()), 2),
+        "badBlockFrac": round(float((bmad > SAD_THRESHOLD_PX).mean()), 4),
+        "blocks":       int(bmad.size),
+    }
+    m["pass"] = (m["madMean"] <= GHOST_TOLERANCE["madMean"]
+                 and m["badBlockFrac"] <= GHOST_TOLERANCE["badBlockFrac"])
+    return m
+
+
+SAD_THRESHOLD_PX = 18   # a block differing by more than this is "bad" (ghosted)
 
 
 def score_scroll(report, gt):
@@ -275,12 +359,14 @@ def main():
 
     # ── Score ──────────────────────────────────────────────────────────────────
     scroll = score_scroll(report, gt)
+    ghost = None if multipage else score_ghost(gt, session, work_png)
     if multipage:
         checks, total_error, seg_pass, fixed_na = score_multipage(report, gt)
         passed = seg_pass and scroll["pass"]
     else:
         metrics, total_error, stitch_pass, seg_ok = score_single(report, gt)
-        passed = stitch_pass and scroll["pass"] and scroll["pageChanges"] == 0
+        passed = (stitch_pass and scroll["pass"] and scroll["pageChanges"] == 0
+                  and (ghost is None or ghost["pass"]))
 
     # ── Archive outputs under unique, self-describing names ───────────────────
     now = datetime.now(timezone.utc)
@@ -316,6 +402,8 @@ def main():
         entry["checks"] = checks
     else:
         entry["metrics"] = metrics
+    if ghost is not None:
+        entry["ghost"] = ghost
 
     # ── History (same session only) ────────────────────────────────────────────
     history = []
@@ -336,6 +424,12 @@ def main():
         print_multipage(checks, total_error, seg_pass, fixed_na, scroll)
     else:
         print_single(metrics, total_error, stitch_pass, scroll)
+    if ghost is not None:
+        print(f"\n  Ghost score vs fullpage.png:  madMean={ghost['madMean']} "
+              f"(tol {GHOST_TOLERANCE['madMean']})  madWorst={ghost['madWorst']}"
+              f"  badBlocks={ghost['badBlockFrac']*100:.2f}% "
+              f"(tol {GHOST_TOLERANCE['badBlockFrac']*100:.0f}%)"
+              f"    ghost: {'PASS' if ghost['pass'] else 'FAIL'}")
     print(f"\n  overall: {'PASS' if passed else 'FAIL'}")
 
     if prev is not None:

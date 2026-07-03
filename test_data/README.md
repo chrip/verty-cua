@@ -90,6 +90,22 @@ are unique pages. Scored additionally on `navK.type` (NAVIGATE|REVISIT) and
 totalError 166 px — REVISIT recognized, vtStart error 0, merged page-0
 height −4 px.
 
+### Recording the hostile session (Milestone-5 fixture)
+
+```bash
+node record_session.mjs --plan hostile         # → session_hostile/ (scroll_page_hostile.html)
+python3 frames_to_mp4.py session_hostile
+```
+
+Single-page scroll over a page with a continuously **animating region** and a
+**floating fixed button** that appears only after 300px of scrolling. The
+recorder additionally captures `fullpage.png` — the browser's full-page render
+with the fixed chrome hidden (pure scrolling document; `captureBeyondViewport`
+would otherwise paint position:fixed elements at viewport coordinates). The
+benchmark scores a **ghost metric** against it: per-16px-block MAD, locally
+aligned per block-row (±12px — drift is not ghosting), animated bboxes
+excluded. Baseline (2026-07-04): madMean 3.84, badBlocks 1.13%.
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit
