@@ -16,3 +16,13 @@ bool VideoSource::next(Frame& out)
     out.t     = static_cast<double>(out.index) / fps_;
     return true;
 }
+
+bool VideoSource::skip_to(long index)
+{
+    cv::Mat discard;
+    while (next_index_ < index) {
+        if (!cap_.read(discard) || discard.empty()) return false;
+        ++next_index_;
+    }
+    return true;
+}

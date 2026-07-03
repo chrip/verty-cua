@@ -19,7 +19,12 @@ tall image with the fixed elements stamped in place.
 
 ## How it works
 
-Three passes over the video (`src/stitcher.{hpp,cpp}`):
+The session pipeline (`src/session_processor.*`) first classifies every frame
+transition — `IDENTICAL | SCROLL(dy) | PAGE_CHANGE | UNSTABLE` — while keeping
+an online estimate of the fixed chrome (pixels that stay stable across scroll
+transitions; reset at every page change). A `SessionSegmenter` folds that
+stream into **page visits** (navigation transitions are debounced), and each
+visit is reconstructed by its own `PageStitcher` in three passes:
 
 1. **analyze** — accumulate the position-fixed pixel mask and a rough per-frame
    scroll offset; reduce the mask to header / footer / left / right fixed-band
@@ -29,6 +34,9 @@ Three passes over the video (`src/stitcher.{hpp,cpp}`):
 3. **reconstruct** — copy each frame's scrolling interior into a tall canvas at
    its scroll offset, then stamp the fixed bands on top: header at the top,
    footer at the bottom, sidebars spanning the full height.
+
+A multi-page session yields one stitched PNG per page (`out_page0.png`, …);
+a single-page session writes exactly the `-o` path.
 
 ## Requirements
 
@@ -52,10 +60,12 @@ This produces `./build/verty`.
 ./build/verty path/to/video.mp4 -o page.png -r report.json -v
 ```
 
-- `-o` — the stitched full-page PNG.
-- `-r` — optional **session report** (JSON): scroll events with timestamps
-  (`{t, frame, dy, vt}`), fixed-element rectangles, and a tally of transition
-  types (identical / scroll / pageChange / unstable).
+- `-o` — the stitched full-page PNG (page N of a multi-page session gets a
+  `_pageN` suffix).
+- `-r` — optional **session report** (JSON): pages (stitch file, geometry,
+  visit frame range, fixed-element rectangles), navigation events, scroll
+  events with timestamps (`{t, frame, pageId, dy, vt}`), and a tally of
+  transition types (identical / scroll / pageChange / unstable).
 
 ## Run the benchmark — from `git clone` to results
 
@@ -97,7 +107,9 @@ benchmark is scored.
 ## Layout
 
 ```
-src/            the tool — Stitcher pipeline (stitcher.*) + scroll detector
+src/            the tool — SessionProcessor → SessionSegmenter → PageStitcher,
+                TransitionClassifier, ScrollDetector, FixedAccumulator,
+                VideoSource, SessionReport
 test_data/      HTML fixtures, session recorder, mp4 muxer, benchmark + results log
 CMakeLists.txt
 ```

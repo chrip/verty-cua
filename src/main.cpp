@@ -6,7 +6,7 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "stitcher.hpp"
+#include "session_processor.hpp"
 #include "session_report.hpp"
 
 namespace fs = std::filesystem;
@@ -21,9 +21,11 @@ struct Args {
 
 static void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " <input.mp4> [-o output.png] [-r report.json] [-v]\n"
-              << "  -o  output image path            (default: output.png)\n"
-              << "  -r  write session report (JSON): scroll events + timestamps,\n"
-              << "      fixed-element rects, transition tally\n"
+              << "  -o  output image path (default: output.png). If the session\n"
+              << "      contains several pages, page N is written with a _pageN\n"
+              << "      suffix (e.g. output_page0.png, output_page1.png).\n"
+              << "  -r  write session report (JSON): pages, navigations, scroll\n"
+              << "      events + timestamps, fixed-element rects, transition tally\n"
               << "  -v  verbose logging\n";
 }
 
@@ -41,31 +43,44 @@ static Args parse_args(int argc, char* argv[]) {
     return a;
 }
 
+// output.png → output_page2.png (single-page sessions keep the name verbatim).
+static std::string page_output_path(const std::string& base, size_t page, size_t page_count) {
+    if (page_count <= 1) return base;
+    fs::path p(base);
+    fs::path named = p.parent_path() /
+        (p.stem().string() + "_page" + std::to_string(page) + p.extension().string());
+    return named.string();
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[])
 {
     Args args = parse_args(argc, argv);
     auto t_start = std::chrono::steady_clock::now();
 
-    Stitcher stitcher(args.input, args.verbose);
-    if (!stitcher.ok()) {
+    SessionProcessor session(args.input, args.verbose);
+    if (!session.ok()) {
         std::cerr << "Cannot open: " << args.input << "\n";
         return 1;
     }
-
-    cv::Mat result = stitcher.run();
-    if (result.empty()) {
-        std::cerr << "[main] reconstruction produced empty image\n";
+    if (!session.run() || session.pages().empty()) {
+        std::cerr << "[main] session produced no pages\n";
         return 1;
     }
 
-    if (!cv::imwrite(args.output, result)) {
-        std::cerr << "[main] failed to write: " << args.output << "\n";
-        return 1;
+    const auto& pages = session.pages();
+    std::vector<std::string> stitch_paths;
+    for (size_t i = 0; i < pages.size(); ++i) {
+        const std::string path = page_output_path(args.output, i, pages.size());
+        if (pages[i].image.empty() || !cv::imwrite(path, pages[i].image)) {
+            std::cerr << "[main] failed to write: " << path << "\n";
+            return 1;
+        }
+        stitch_paths.push_back(path);
     }
 
     if (!args.report.empty()) {
-        if (!SessionReport::write(args.report, args.input, stitcher)) {
+        if (!SessionReport::write(args.report, args.input, session, stitch_paths)) {
             std::cerr << "[main] failed to write report: " << args.report << "\n";
             return 1;
         }
@@ -74,8 +89,9 @@ int main(int argc, char* argv[])
 
     double secs = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - t_start).count();
-    std::cout << "[main] done in " << std::format("{:.1f}s", secs) << "\n"
-              << "[main] output: " << fs::absolute(args.output) << "\n"
-              << "[main] doc size: " << result.cols << "×" << result.rows << "px\n";
+    std::cout << "[main] done in " << std::format("{:.1f}s", secs) << "\n";
+    for (size_t i = 0; i < pages.size(); ++i)
+        std::cout << "[main] page " << i << ": " << fs::absolute(stitch_paths[i])
+                  << "  (" << pages[i].image.cols << "×" << pages[i].image.rows << "px)\n";
     return 0;
 }

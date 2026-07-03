@@ -10,6 +10,14 @@ constexpr int SAD_THRESHOLD = 18;       // max mean absolute diff to call a matc
 constexpr int FIXED_CONFIRM_FRAMES = 6; // stable scroll events before a pixel is FIXED
 constexpr double IDENTICAL_FRAME_MAD = 2.0;      // below: duplicate frame / pause
 constexpr double PAGE_CHANGE_MIN_FRACTION = 0.4; // changed-area fraction ⇒ new page
+constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-change window
+
+// One page visit: a contiguous, stable frame range showing a single page.
+// Frames between visits (navigation transitions) belong to no visit.
+struct PageVisit {
+    long firstFrame = 0;   // inclusive
+    long lastFrame  = 0;   // inclusive
+};
 
 // ── Scroll detection result ───────────────────────────────────────────────────
 struct ScrollResult {

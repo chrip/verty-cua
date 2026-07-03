@@ -72,7 +72,16 @@ Its `ground_truth.json` uses the **multi-page schema**: `pages[]` (per page:
 `pageHeight`, `maxScrollY`, `fixed`, `regions`), per-frame `{page, scrollY}`
 (`page: null` marks navigation-transition frames), `events[]` (hover ranges,
 click, pageLoaded), and `navigations[]` (`{fromPage, toPage, clickFrame,
-firstStableFrame}`). Scoring against it is Milestone-3 work.
+firstStableFrame}`).
+
+The benchmark auto-detects the schema and scores multipage sessions on:
+page count, navigation count, per-navigation **boundary error** (first stable
+frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit
+actually saw**, fixed bands (only for visits that scrolled ≥ 150px — a
+no-scroll visit cannot reveal fixed elements), plus the session-wide
+scroll-event score. Baseline (2026-07-03): **totalError 82px** — boundary
+error 0, page heights −2/0, dyErrorSum 2px; sidebar bands +39 (the documented
+over-detection).
 
 ## What a recording produces
 

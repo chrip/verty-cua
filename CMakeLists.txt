@@ -10,7 +10,10 @@ find_package(OpenCV REQUIRED)
 add_executable(verty
     src/main.cpp
     src/scroll_detector.cpp
-    src/stitcher.cpp
+    src/fixed_accumulator.cpp
+    src/page_stitcher.cpp
+    src/session_segmenter.cpp
+    src/session_processor.cpp
     src/transition_classifier.cpp
     src/video_source.cpp
     src/session_report.cpp

@@ -157,9 +157,24 @@ the JSON report; schema grows in M6).
 
 ---
 
-## Milestone 3 — Session segmentation + per-page stitching
+## Milestone 3 — Session segmentation + per-page stitching ✅ (2026-07-03)
 
 **Goal:** multiple pages per video; one stitched screenshot per page visit.
+
+**Status: done.** `SessionProcessor` (session classify pass → segment → one
+`PageStitcher` per visit), `SessionSegmenter` (with the debounced transition
+window deferred from M2), `Stitcher` → range-scoped `PageStitcher`,
+`FixedAccumulator` shared, report schema with `pages[]`/`navigations[]`/
+per-event `pageId`; benchmark scores reports (no stdout parsing) and handles
+both session types with per-session history. Measured exit criteria: multipage
+totalError 82px — pageCount 2/2, **boundary error 0 frames** (criterion ±3),
+page heights −2/0 px vs what each visit saw, scroll dyErrorSum 2px; single
+session unchanged (99px). One algorithmic finding en route: a navigation
+between same-chrome pages was invisible to the full-frame changed fraction
+(0.39 < 0.4 gate — shared chrome dilutes it); fixed by feeding the session
+pass an **online chrome estimate** (stability accumulated across scroll
+transitions, reset at every page change), which lifts the fraction to the
+interior-only value (0.67 measured).
 
 **New classes:** `SessionSegmenter` (folds the transition stream into
 `PageVisit {firstFrame, lastFrame, tEnter, tExit}` segments — including the

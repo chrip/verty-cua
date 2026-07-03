@@ -1,17 +1,21 @@
 #pragma once
-#include "stitcher.hpp"
+#include "session_processor.hpp"
 #include <string>
+#include <vector>
 
 // Writes the machine-readable session report (JSON).
 //
-// Milestone 2 first cut of the output contract: video info, transition tally,
-// fixed-element rectangles, and the scroll-event trace with timestamps.
-// The schema grows toward the full contract in Roadmap M6 (pages, visits,
-// navigation events, confidence fields).
+// Milestone 3 cut of the output contract: video info, session transition
+// tally, one entry per detected page (stitch file, geometry, visit frame
+// range, fixed-element rectangles), navigation events, and the scroll-event
+// trace with per-event page id. The schema grows toward the full contract in
+// Roadmap M6 (REVISIT navigation type and confidence fields arrive with M4).
 class SessionReport {
 public:
+    // stitch_paths[i] = output image written for pages()[i].
     // Returns false if the file could not be written.
     static bool write(const std::string& path,
                       const std::string& video_path,
-                      const Stitcher& stitcher);
+                      const SessionProcessor& session,
+                      const std::vector<std::string>& stitch_paths);
 };

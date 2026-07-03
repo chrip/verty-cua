@@ -31,44 +31,77 @@ std::string escape(const std::string& s)
 
 bool SessionReport::write(const std::string& path,
                           const std::string& video_path,
-                          const Stitcher& st)
+                          const SessionProcessor& session,
+                          const std::vector<std::string>& stitch_paths)
 {
     std::ofstream out(path);
     if (!out) return false;
     out << std::fixed << std::setprecision(3);
 
+    const double fps = session.fps();
+
     out << "{\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
-        << "\"fps\": " << st.fps() << ", "
-        << "\"frames\": " << st.frame_count() << ", "
-        << "\"viewport\": {\"w\": " << st.frame_w() << ", \"h\": " << st.frame_h() << "}},\n";
+        << "\"fps\": " << fps << ", "
+        << "\"frames\": " << session.frame_count() << ", "
+        << "\"viewport\": {\"w\": " << session.frame_w() << ", \"h\": " << session.frame_h() << "}},\n";
 
-    const TransitionCounts& tc = st.transition_counts();
+    const TransitionCounts& tc = session.transition_counts();
     out << "  \"transitions\": {\"identical\": " << tc.identical
         << ", \"scroll\": " << tc.scroll
         << ", \"pageChange\": " << tc.pageChange
         << ", \"unstable\": " << tc.unstable << "},\n";
 
-    out << "  \"docHeight\": " << st.doc_height() << ",\n";
+    // ── Pages ────────────────────────────────────────────────────────────────
+    out << "  \"pages\": [\n";
+    const auto& pages = session.pages();
+    for (size_t i = 0; i < pages.size(); ++i) {
+        const auto& p = pages[i];
+        out << "    {\"id\": " << i
+            << ", \"stitch\": \"" << escape(i < stitch_paths.size() ? stitch_paths[i] : "") << "\""
+            << ", \"width\": " << p.image.cols
+            << ", \"docHeight\": " << p.docHeight
+            << ", \"visit\": {\"firstFrame\": " << p.visit.firstFrame
+            << ", \"lastFrame\": " << p.visit.lastFrame
+            << ", \"tEnter\": " << (p.visit.firstFrame / fps)
+            << ", \"tExit\": " << (p.visit.lastFrame / fps) << "}"
+            << ", \"fixedRects\": [";
+        for (size_t k = 0; k < p.fixedRects.size(); ++k) {
+            const cv::Rect& r = p.fixedRects[k].rect;
+            out << (k ? ", " : "")
+                << "{\"kind\": \"" << kind_name(p.fixedRects[k].kind) << "\", "
+                << "\"x\": " << r.x << ", \"y\": " << r.y << ", "
+                << "\"w\": " << r.width << ", \"h\": " << r.height << "}";
+        }
+        out << "]}" << (i + 1 < pages.size() ? "," : "") << "\n";
+    }
+    out << "  ],\n";
 
-    out << "  \"fixedRects\": [";
-    const auto& rects = st.fixed_rects();
-    for (size_t i = 0; i < rects.size(); ++i) {
-        const cv::Rect& r = rects[i].rect;
+    // ── Navigations (REVISIT classification arrives with Roadmap M4) ────────
+    out << "  \"navigations\": [";
+    const auto& navs = session.nav_frames();
+    for (size_t i = 0; i < navs.size(); ++i) {
         out << (i ? ", " : "")
-            << "{\"kind\": \"" << kind_name(rects[i].kind) << "\", "
-            << "\"x\": " << r.x << ", \"y\": " << r.y << ", "
-            << "\"w\": " << r.width << ", \"h\": " << r.height << "}";
+            << "{\"frame\": " << navs[i]
+            << ", \"t\": " << (navs[i] / fps)
+            << ", \"from\": " << i
+            << ", \"to\": " << (i + 1)
+            << ", \"type\": \"NAVIGATE\"}";
     }
     out << "],\n";
 
+    // ── Scroll events (flat, with page id) ───────────────────────────────────
     out << "  \"scrollEvents\": [\n";
-    const auto& events = st.scroll_events();
-    for (size_t i = 0; i < events.size(); ++i) {
-        const ScrollEvent& e = events[i];
-        out << "    {\"t\": " << e.t << ", \"frame\": " << e.frame
-            << ", \"dy\": " << e.dy << ", \"vt\": " << e.vt << "}"
-            << (i + 1 < events.size() ? "," : "") << "\n";
+    size_t total = 0;
+    for (const auto& p : pages) total += p.scrollEvents.size();
+    size_t written = 0;
+    for (size_t i = 0; i < pages.size(); ++i) {
+        for (const ScrollEvent& e : pages[i].scrollEvents) {
+            out << "    {\"t\": " << e.t << ", \"frame\": " << e.frame
+                << ", \"pageId\": " << i
+                << ", \"dy\": " << e.dy << ", \"vt\": " << e.vt << "}"
+                << (++written < total ? "," : "") << "\n";
+        }
     }
     out << "  ]\n";
     out << "}\n";

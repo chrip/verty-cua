@@ -23,6 +23,11 @@ public:
     // Reads the next frame; returns false at end of stream.
     bool next(Frame& out);
 
+    // Decode-and-discard until the next frame to be read has `index`.
+    // Sequential (no codec seeking) — deterministic on every container.
+    // Returns false if the stream ends first.
+    bool skip_to(long index);
+
 private:
     cv::VideoCapture cap_;
     int    width_      = 0;
