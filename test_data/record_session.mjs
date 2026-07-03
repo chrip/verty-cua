@@ -1,18 +1,25 @@
 #!/usr/bin/env node
 /* ═══════════════════════════════════════════════════════════════════════════
-   record_session.mjs — deterministic scroll-session recorder (no deps).
+   record_session.mjs — deterministic session recorder (no deps).
 
-   Drives headless Chromium via the DevTools Protocol, loads a page, scrolls it
-   from top to bottom in fixed pixel steps, and writes one JPEG per step plus a
-   ground_truth.json describing the exact scroll offset of every frame and the
-   page's fixed-region bounding boxes.
+   Drives headless Chromium via the DevTools Protocol and writes one JPEG per
+   captured frame plus a ground_truth.json describing exactly what happened
+   (per-frame scroll offset, page id, hover/click/navigation events, and each
+   page's fixed-region bounding boxes).
 
    Requires only Node 22+ (built-in WebSocket + fetch) and `chromium` on PATH.
 
    Usage:
-     node record_session.mjs [pageFile] [outDir]
-       pageFile  HTML file to record   (default: ./scroll_page.html next to this)
-       outDir    output directory      (default: ./session_page1)
+     node record_session.mjs [--plan single|multipage] [pageFile] [outDir]
+
+   Plans:
+     single     (default) scroll one page top→bottom with eased flicks, reading
+                pauses and one scroll-back-up.  Defaults: scroll_page.html →
+                session_page1/.  Ground-truth schema: single-page (benchmark).
+     multipage  visit page 1, scroll a little, hover a few links, click a link,
+                land on page 2 and stay there for a few seconds.  Defaults:
+                scroll_page.html → session_multipage/.  Ground-truth schema:
+                multi-page (pages[], per-frame page id, events, navigations).
 
    Tunables below: viewport size, scroll step, pauses, fps, JPEG quality.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -25,32 +32,52 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+// ── CLI ─────────────────────────────────────────────────────────────────────
+const argv = process.argv.slice(2);
+let PLAN_NAME = 'single';
+const planIdx = argv.indexOf('--plan');
+if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
+if (!['single', 'multipage'].includes(PLAN_NAME)) {
+  console.error(`unknown plan: ${PLAN_NAME} (use single|multipage)`);
+  process.exit(1);
+}
+const PAGE_FILE = resolve(argv[0] || join(HERE, 'scroll_page.html'));
+const OUT_DIR   = resolve(argv[1] ||
+  join(HERE, PLAN_NAME === 'multipage' ? 'session_multipage' : 'session_page1'));
+const FRAMES_DIR = join(OUT_DIR, 'frames');
+
 // ── Config ──────────────────────────────────────────────────────────────────
-const PAGE_FILE   = resolve(process.argv[2] || join(HERE, 'scroll_page.html'));
-const OUT_DIR     = resolve(process.argv[3] || join(HERE, 'session_page1'));
-const FRAMES_DIR  = join(OUT_DIR, 'frames');
-
-const VIEWPORT_W  = 1280;   // exact frame width  (device px, scale factor 1)
-const VIEWPORT_H  = 900;    // exact frame height
-const AVG_STEP    = 12;     // average px/frame during a flick (varies via easing)
-const FPS         = 30;     // intended playback fps (recorded into ground truth)
+const VIEWPORT_W   = 1280;  // exact frame width  (device px, scale factor 1)
+const VIEWPORT_H   = 900;   // exact frame height
+const AVG_STEP     = 12;    // average px/frame during a flick (varies via easing)
+const FPS          = 30;    // intended playback fps (recorded into ground truth)
 const JPEG_QUALITY = 92;    // 0..100
-const SETTLE_MS   = 24;     // wait after each scroll for the page to repaint
-const PORT        = 9240;
+const SETTLE_MS    = 24;    // wait after each scroll/mouse step for a repaint
+const PORT         = 9240;
 
-// Realistic scroll plan. Targets are fractions of maxScrollY; `pause` holds the
-// position for N still frames (exercises the identical-frame pre-filter). Each
-// scroll is an eased flick (slow→fast→slow). One step scrolls BACK UP, and the
-// last lands at the very bottom, so the whole page is seen at least once.
-const PAUSE_SHORT = 10;
-const PAUSE_LONG  = 18;
-const PLAN = [
-  { pause: 12 },                          // rest at the top
-  { to: 0.28 }, { pause: PAUSE_LONG },     // flick down, read
-  { to: 0.58 }, { pause: PAUSE_LONG },     // flick down, read
-  { to: 0.42 }, { pause: PAUSE_SHORT },    // ← scroll BACK UP (inverse), glance
-  { to: 0.82 }, { pause: PAUSE_SHORT },    // flick down past where we were
-  { to: 1.00 }, { pause: 14 },             // to the very bottom, rest
+// Single-page plan: fractions of maxScrollY; `pause` holds N still frames.
+// One step scrolls BACK UP, the last lands at the very bottom (full coverage).
+const SINGLE_PLAN = [
+  { pause: 12 },
+  { to: 0.28 }, { pause: 18 },
+  { to: 0.58 }, { pause: 18 },
+  { to: 0.42 }, { pause: 10 },   // ← inverse scroll
+  { to: 0.82 }, { pause: 10 },
+  { to: 1.00 }, { pause: 14 },
+];
+
+// Multi-page plan: visit page 1, scroll a little, hover links (real :hover CSS
+// lands in the video), click the CTA → page 2, park the mouse, stay a while.
+const MULTIPAGE_PLAN = [
+  { pause: 15 },                                                  // arrive
+  { to: 0.12 },                                                   // scroll a little
+  { pause: 12 },                                                  // read
+  { hover: '#site-header nav a:nth-of-type(2)',     frames: 10 }, // header link
+  { hover: '#left-sidebar nav a:nth-of-type(4)',    frames: 10 }, // sidebar link
+  { hover: '#scroll-content a.next-article',        frames: 8 },  // the CTA
+  { click: '#scroll-content a.next-article' },                    // → page 2
+  { park:  { x: 30, y: 870 } },                                   // mouse off the links
+  { pause: 75 },                                                  // stay ~2.5 s
 ];
 
 // ── CDP plumbing ──────────────────────────────────────────────────────────────
@@ -91,85 +118,107 @@ ws.addEventListener('message', ev => {
 const evaluate = async (expr) =>
   (await call('Runtime.evaluate', { expression: expr, returnByValue: true })).result.value;
 
-// ── Recorder ────────────────────────────────────────────────────────────────
-try {
-  await call('Page.enable');
-  await call('Runtime.enable');
+// evaluate that survives a navigation (execution context destroyed → null).
+const tryEvaluate = async (expr) => {
+  try { return await evaluate(expr); } catch { return null; }
+};
 
-  // Pin an exact viewport independent of window chrome.
-  await call('Emulation.setDeviceMetricsOverride', {
-    width: VIEWPORT_W, height: VIEWPORT_H, deviceScaleFactor: 1, mobile: false,
-  });
+// ── Shared recorder helpers ───────────────────────────────────────────────────
+const frames = [];
+let frameNo = 0;
+const capture = async (extra) => {
+  const { data } = await call('Page.captureScreenshot', { format: 'jpeg', quality: JPEG_QUALITY });
+  const file = `frame_${String(frameNo).padStart(5, '0')}.jpg`;
+  writeFileSync(join(FRAMES_DIR, file), Buffer.from(data, 'base64'));
+  frames.push({ index: frameNo, file, ...extra });
+  return frameNo++;
+};
 
-  await call('Page.navigate', { url: 'file://' + PAGE_FILE });
-  // Wait for load + our ground-truth object to be populated.
+const easeInOut = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+// Load a page and wait until its ground-truth instrumentation is ready.
+async function loadPage(url) {
+  await call('Page.navigate', { url });
   for (let i = 0; i < 80; i++) {
     await sleep(100);
-    if (await evaluate('document.readyState === "complete" && !!window.GROUND_TRUTH')) break;
+    if (await tryEvaluate('document.readyState === "complete" && !!window.GROUND_TRUTH')) break;
   }
   await evaluate('window.scrollTo(0, 0)');
   await sleep(100);
+  return evaluate('window.GROUND_TRUTH');
+}
 
-  const gt = await evaluate('window.GROUND_TRUTH');
+// Eased scroll from curY to targetY, capturing one frame per step.
+// `frameMeta(scrollY)` supplies the per-frame ground-truth fields.
+async function scrollTo(curY, targetY, frameMeta) {
+  const dist = targetY - curY;
+  if (dist === 0) return curY;
+  const steps = Math.max(2, Math.round(Math.abs(dist) / AVG_STEP));
+  let lastY = curY;
+  for (let i = 1; i <= steps; i++) {
+    const y = Math.round(curY + dist * easeInOut(i / steps));
+    if (y === lastY) continue;
+    const actual = await evaluate(`window.scrollTo(0, ${y}); Math.round(window.scrollY)`);
+    await sleep(SETTLE_MS);
+    await capture(frameMeta(actual));
+    lastY = y;
+  }
+  return targetY;
+}
+
+// ── Mouse (viewport coordinates) ──────────────────────────────────────────────
+const mouse = { x: 10, y: 10 };
+async function moveMouse(x, y, steps = 3) {
+  for (let i = 1; i <= steps; i++) {
+    const mx = Math.round(mouse.x + (x - mouse.x) * (i / steps));
+    const my = Math.round(mouse.y + (y - mouse.y) * (i / steps));
+    await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: mx, y: my });
+    await sleep(SETTLE_MS);
+  }
+  mouse.x = x; mouse.y = y;
+}
+
+async function elementCenter(selector) {
+  const c = await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  if (!c) throw new Error(`element not found or not visible: ${selector}`);
+  if (c.y < 0 || c.y > VIEWPORT_H || c.x < 0 || c.x > VIEWPORT_W)
+    throw new Error(`element outside viewport: ${selector} at (${c.x},${c.y})`);
+  return c;
+}
+
+// ── Plan: single (schema unchanged — the stitch benchmark consumes it) ───────
+async function runSingle() {
+  const gt = await loadPage('file://' + PAGE_FILE);
   const maxScrollY = gt.page.maxScrollY;
   console.log(`page: ${PAGE_FILE}`);
   console.log(`viewport ${VIEWPORT_W}×${VIEWPORT_H} | pageHeight ${gt.page.pageHeight}px | maxScrollY ${maxScrollY}px`);
-  console.log(`fixed regions:`, gt.fixed);
-
-  // Fresh output directory.
-  rmSync(FRAMES_DIR, { recursive: true, force: true });
-  mkdirSync(FRAMES_DIR, { recursive: true });
-
-  const frames = [];
-  let n = 0;
-  const capture = async (scrollY) => {
-    const { data } = await call('Page.captureScreenshot', { format: 'jpeg', quality: JPEG_QUALITY });
-    const file = `frame_${String(n).padStart(5, '0')}.jpg`;
-    writeFileSync(join(FRAMES_DIR, file), Buffer.from(data, 'base64'));
-    frames.push({ index: n, file, scrollY });
-    n++;
-  };
-
-  // ── Execute the scroll plan ─────────────────────────────────────────────────
-  // Eased flicks (slow→fast→slow) between keyframes, reading pauses at each, and
-  // one scroll-back-up before finishing at the bottom.
-  const easeInOut = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  console.log('fixed regions:', gt.fixed);
 
   const resolvedPlan = [];
   let curY = 0;
   await evaluate('window.scrollTo(0, 0)'); await sleep(SETTLE_MS);
 
-  for (const step of PLAN) {
-    if (step.pause) {                                 // hold position (reading pause)
-      for (let i = 0; i < step.pause; i++) await capture(curY);
+  for (const step of SINGLE_PLAN) {
+    if (step.pause) {
+      for (let i = 0; i < step.pause; i++) await capture({ scrollY: curY });
       resolvedPlan.push({ pause: step.pause, atPx: curY });
       continue;
     }
     const targetY = Math.min(maxScrollY, Math.max(0, Math.round(step.to * maxScrollY)));
-    const dist = targetY - curY;
-    resolvedPlan.push({ to: step.to, toPx: targetY, dir: dist >= 0 ? 'down' : 'up' });
-    if (dist === 0) continue;
-    const steps = Math.max(2, Math.round(Math.abs(dist) / AVG_STEP));
-    let lastY = curY;
-    for (let i = 1; i <= steps; i++) {
-      const y = Math.round(curY + dist * easeInOut(i / steps));
-      if (y === lastY) continue;                      // skip duplicate positions mid-flick
-      const actual = await evaluate(`window.scrollTo(0, ${y}); Math.round(window.scrollY)`);
-      await sleep(SETTLE_MS);
-      await capture(actual);
-      lastY = y;
-    }
-    curY = targetY;
+    resolvedPlan.push({ to: step.to, toPx: targetY, dir: targetY >= curY ? 'down' : 'up' });
+    curY = await scrollTo(curY, targetY, scrollY => ({ scrollY }));
   }
 
-  // ── Trajectory / coverage stats ─────────────────────────────────────────────
   const ys = frames.map(f => f.scrollY);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const upSegments = resolvedPlan.filter(p => p.dir === 'up').length;
   const sorted = [...new Set(ys)].sort((a, b) => a - b);
   let maxGap = 0;
   for (let i = 1; i < sorted.length; i++) maxGap = Math.max(maxGap, sorted[i] - sorted[i - 1]);
-  const reachedBottom = maxY >= maxScrollY;
 
   const meta = {
     page: PAGE_FILE,
@@ -182,21 +231,136 @@ try {
     pageHeight: gt.page.pageHeight,
     maxScrollY,
     scrollRange: { min: minY, max: maxY },
-    reachedBottom,
-    upSegments,
-    maxScrollGap: maxGap,   // largest jump between consecutive covered offsets
+    reachedBottom: maxY >= maxScrollY,
+    upSegments: resolvedPlan.filter(p => p.dir === 'up').length,
+    maxScrollGap: maxGap,
     plan: resolvedPlan,
-    // The reconstructed-screenshot ground truth for the stitching algorithm:
     fixed: gt.fixed,
     regions: gt.regions,
     frames,
   };
   writeFileSync(join(OUT_DIR, 'ground_truth.json'), JSON.stringify(meta, null, 2));
-
   console.log(`\n✔ ${frames.length} frames → ${FRAMES_DIR}`);
   console.log(`✔ ground truth → ${join(OUT_DIR, 'ground_truth.json')}`);
-  console.log(`  trajectory: scrollRange [${minY}, ${maxY}]px, ${upSegments} up-segment(s), `
-            + `reachedBottom=${reachedBottom}, maxGap=${maxGap}px (< content window ⇒ full coverage)`);
+  console.log(`  trajectory: scrollRange [${minY}, ${maxY}]px, reachedBottom=${maxY >= maxScrollY}, maxGap=${maxGap}px`);
+}
+
+// ── Plan: multipage ───────────────────────────────────────────────────────────
+async function runMultipage() {
+  const pages = [];
+  const events = [];
+  const navigations = [];
+
+  const pageEntry = (gt, file) => ({
+    file,
+    pageHeight: gt.page.pageHeight,
+    maxScrollY: gt.page.maxScrollY,
+    fixed: gt.fixed,
+    regions: gt.regions,
+  });
+
+  let gt = await loadPage('file://' + PAGE_FILE);
+  pages.push(pageEntry(gt, PAGE_FILE));
+  let pageIdx = 0;
+  let curY = 0;
+  console.log(`page 0: ${PAGE_FILE} (pageHeight ${gt.page.pageHeight}px)`);
+
+  for (const step of MULTIPAGE_PLAN) {
+    if (step.pause) {
+      for (let i = 0; i < step.pause; i++) await capture({ page: pageIdx, scrollY: curY });
+      continue;
+    }
+    if (step.to !== undefined) {
+      const targetY = Math.min(gt.page.maxScrollY, Math.max(0, Math.round(step.to * gt.page.maxScrollY)));
+      curY = await scrollTo(curY, targetY, scrollY => ({ page: pageIdx, scrollY }));
+      continue;
+    }
+    if (step.hover) {
+      const c = await elementCenter(step.hover);
+      await moveMouse(c.x, c.y);
+      const start = frameNo;
+      for (let i = 0; i < step.frames; i++) { await sleep(SETTLE_MS); await capture({ page: pageIdx, scrollY: curY }); }
+      events.push({ type: 'hover', selector: step.hover, frameStart: start, frameEnd: frameNo - 1 });
+      console.log(`hover ${step.hover} → frames ${start}..${frameNo - 1}`);
+      continue;
+    }
+    if (step.park) {
+      await moveMouse(step.park.x, step.park.y);
+      continue;
+    }
+    if (step.click) {
+      const c = await elementCenter(step.click);
+      await moveMouse(c.x, c.y);
+      const clickFrame = frameNo;   // the click lands between this frame and the previous
+      await call('Input.dispatchMouseEvent', { type: 'mousePressed',  x: c.x, y: c.y, button: 'left', clickCount: 1 });
+      await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', clickCount: 1 });
+      events.push({ type: 'click', selector: step.click, frame: clickFrame });
+
+      // Capture through the navigation until the new page is stable. Frames
+      // whose state can't be read (context destroyed / not loaded) are marked
+      // page:null — the "transition window" the segmenter must learn to skip.
+      const fromPage = pageIdx;
+      let stable = 0;
+      let firstStableFrame = -1;
+      for (let i = 0; i < 200 && stable < 3; i++) {
+        await sleep(SETTLE_MS);
+        const st = await tryEvaluate(
+          '(document.readyState === "complete" && window.GROUND_TRUTH) ? {ready: true, scrollY: Math.round(window.scrollY)} : null');
+        if (st && st.ready) {
+          if (firstStableFrame < 0) firstStableFrame = frameNo;
+          stable++;
+          await capture({ page: pages.length, scrollY: st.scrollY });   // new page id
+        } else {
+          stable = 0;
+          firstStableFrame = -1;
+          await capture({ page: null, scrollY: null });                  // transition
+        }
+      }
+      gt = await evaluate('window.GROUND_TRUTH');
+      const newFile = await evaluate('decodeURIComponent(location.pathname)');
+      pageIdx = pages.length;
+      pages.push(pageEntry(gt, newFile));
+      curY = await evaluate('Math.round(window.scrollY)');
+      navigations.push({ fromPage, toPage: pageIdx, clickFrame, firstStableFrame });
+      events.push({ type: 'pageLoaded', page: pageIdx, frame: firstStableFrame });
+      console.log(`click ${step.click} @frame ${clickFrame} → page ${pageIdx} (${newFile}), stable @frame ${firstStableFrame}`);
+      continue;
+    }
+  }
+
+  const meta = {
+    plan: 'multipage',
+    recordedAt: new Date().toISOString(),
+    viewport: { width: VIEWPORT_W, height: VIEWPORT_H, deviceScaleFactor: 1 },
+    avgStep: AVG_STEP,
+    fps: FPS,
+    jpegQuality: JPEG_QUALITY,
+    frameCount: frames.length,
+    pages,
+    events,
+    navigations,
+    frames,
+  };
+  writeFileSync(join(OUT_DIR, 'ground_truth.json'), JSON.stringify(meta, null, 2));
+  console.log(`\n✔ ${frames.length} frames → ${FRAMES_DIR}`);
+  console.log(`✔ ground truth → ${join(OUT_DIR, 'ground_truth.json')}`);
+  console.log(`  pages: ${pages.length}, navigations: ${navigations.length}, `
+            + `transition frames: ${frames.filter(f => f.page === null).length}`);
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+try {
+  await call('Page.enable');
+  await call('Runtime.enable');
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: VIEWPORT_W, height: VIEWPORT_H, deviceScaleFactor: 1, mobile: false,
+  });
+
+  rmSync(FRAMES_DIR, { recursive: true, force: true });
+  mkdirSync(FRAMES_DIR, { recursive: true });
+
+  if (PLAN_NAME === 'multipage') await runMultipage();
+  else                           await runSingle();
 } catch (e) {
   console.error('record failed:', e.message);
   process.exitCode = 1;

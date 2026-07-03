@@ -49,8 +49,13 @@ This produces `./build/verty`.
 ## Run it on a recording
 
 ```bash
-./build/verty path/to/video.mp4 -o page.png -v
+./build/verty path/to/video.mp4 -o page.png -r report.json -v
 ```
+
+- `-o` — the stitched full-page PNG.
+- `-r` — optional **session report** (JSON): scroll events with timestamps
+  (`{t, frame, dy, vt}`), fixed-element rectangles, and a tally of transition
+  types (identical / scroll / pageChange / unstable).
 
 ## Run the benchmark — from `git clone` to results
 
@@ -73,10 +78,13 @@ python3 frames_to_mp4.py
 python3 test_stitch_session.py
 ```
 
-Step 3 prints a per-metric table and a headline **`totalError`** in pixels
-(lower is better), appends the run to `test_data/stitch_test_results.jsonl`
-(the tracked history, so runs stay comparable as the algorithm changes), and
-archives the reconstructed image under `test_data/session_page1/outputs/`.
+Step 3 prints a per-metric stitch table with a headline **`totalError`** in
+pixels (lower is better) **and** a scroll-event score (per-frame `dy` errors,
+event counts, page-change false positives) checked against the browser's
+ground-truth scroll log. Every run is appended to
+`test_data/stitch_test_results.jsonl` (the tracked history, so runs stay
+comparable as the algorithm changes); the reconstructed image and the session
+report are archived under `test_data/session_page1/outputs/`.
 
 Current best: **`totalError` ≈ 99 px** — document width/height are near-exact;
 the remainder is intentional fixed-band over-detection (a deliberately harmless

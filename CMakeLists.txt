@@ -11,6 +11,9 @@ add_executable(verty
     src/main.cpp
     src/scroll_detector.cpp
     src/stitcher.cpp
+    src/transition_classifier.cpp
+    src/video_source.cpp
+    src/session_report.cpp
 )
 
 target_include_directories(verty PRIVATE src ${OpenCV_INCLUDE_DIRS})

@@ -7,10 +7,15 @@ that session's ground_truth.json (measured in the real browser). Every run is
 appended to stitch_test_results.jsonl so the metrics can be tracked as the
 algorithm improves — lower `totalError` is better.
 
-Scored metrics (all in pixels):
+Scored metrics:
+  Stitch (pixels):
     width, height   — reconstructed document size vs. viewport width / pageHeight
     header, footer  — detected fixed top/bottom band height vs. ground truth
     left, right     — detected fixed sidebar width vs. ground truth
+  Scroll events (Milestone 2, from the tool's -r report JSON):
+    dyErrorSum      — Σ |dy_algo − dy_gt| over the union of scrolling frames
+    eventCountDiff  — |#events_algo − #events_gt|
+    pageChanges     — PAGE_CHANGE transitions (must be 0 on a single-page session)
 
 Usage:
     python3 test_stitch_session.py [sessionDir] [--strict]
@@ -29,6 +34,39 @@ RESULTS_LOG = os.path.join(HERE, "stitch_test_results.jsonl")
 # Per-metric pass tolerance (pixels). The fixed regions are block-granular in the
 # current algorithm, so 1 block (16px) is the near-term target; size is exact.
 TOLERANCE = {"width": 0, "height": 32, "header": 16, "footer": 16, "left": 16, "right": 16}
+
+# Scroll-event tolerances (Milestone 2). Baseline measured 2026-07-03:
+# dyErrorSum=6 and eventCountDiff=6 — all six misses are |dy|=1 steps, which the
+# ScrollDetector rejects as noise BY DESIGN (|dy|≤1 gate); they also account for
+# the stitch's -2px height drift. pageChanges=0. Tolerances = baseline + margin.
+SCROLL_TOLERANCE = {"dyErrorSum": 12, "eventCountDiff": 8, "pageChanges": 0}
+
+
+def score_scroll(report, gt):
+    """Compare the tool's scroll events against the recorder's ground truth."""
+    fr = gt["frames"]
+    gt_ev = {}
+    for i in range(1, len(fr)):
+        d = round(fr[i]["scrollY"] - fr[i - 1]["scrollY"])
+        if d:
+            gt_ev[i] = d
+    algo_ev = {e["frame"]: e["dy"] for e in report.get("scrollEvents", [])}
+
+    frames = set(gt_ev) | set(algo_ev)
+    dy_error_sum = sum(abs(algo_ev.get(f, 0) - gt_ev.get(f, 0)) for f in frames)
+    page_changes = report.get("transitions", {}).get("pageChange", -1)
+
+    m = {
+        "gtEvents":       len(gt_ev),
+        "algoEvents":     len(algo_ev),
+        "eventCountDiff": abs(len(algo_ev) - len(gt_ev)),
+        "dyErrorSum":     dy_error_sum,
+        "pageChanges":    page_changes,
+    }
+    m["pass"] = (m["dyErrorSum"] <= SCROLL_TOLERANCE["dyErrorSum"]
+                 and m["eventCountDiff"] <= SCROLL_TOLERANCE["eventCountDiff"]
+                 and m["pageChanges"] == SCROLL_TOLERANCE["pageChanges"])
+    return m
 
 
 def die(msg):
@@ -55,6 +93,7 @@ def main():
     gt_path = os.path.join(session, "ground_truth.json")
     out_dir = os.path.join(session, "outputs")   # archived stitched PNGs, one per run
     work_png = os.path.join(out_dir, "pending.png")
+    work_json = os.path.join(out_dir, "pending.json")
 
     if not os.path.exists(BINARY):
         die(f"binary not found: {BINARY}\n  build it first:  cmake --build {os.path.join(REPO,'build')} -j4")
@@ -74,11 +113,14 @@ def main():
 
     # ── Run the algorithm ──────────────────────────────────────────────────────
     os.makedirs(out_dir, exist_ok=True)
-    proc = subprocess.run([BINARY, video, "-o", work_png, "-v"],
+    proc = subprocess.run([BINARY, video, "-o", work_png, "-r", work_json, "-v"],
                           capture_output=True, text=True)
     log = proc.stdout + proc.stderr
     if proc.returncode != 0:
         die(f"verty exited {proc.returncode}\n{log}")
+    if not os.path.exists(work_json):
+        die("tool did not write the session report (-r) — Milestone 2 contract")
+    report = json.load(open(work_json))
 
     # ── Parse measured values ──────────────────────────────────────────────────
     m_size = re.search(r"doc size:\s*(\d+)\D+(\d+)\s*px", log)
@@ -103,24 +145,31 @@ def main():
         metrics[k] = {"measured": measured[k], "expected": expected[k],
                       "error": err, "within_tol": abs(err) <= TOLERANCE[k]}
     total_error = sum(abs(metrics[k]["error"]) for k in metrics)
-    passed = all(metrics[k]["within_tol"] for k in metrics)
+    stitch_passed = all(metrics[k]["within_tol"] for k in metrics)
 
-    # ── Archive the stitched output under a unique, self-describing name ────────
+    scroll = score_scroll(report, gt)
+    passed = stitch_passed and scroll["pass"]
+
+    # ── Archive stitched output + report under unique, self-describing names ────
     now = datetime.now(timezone.utc)
     gi = git_info()
     tag = (gi["commit"] or "nogit") + ("-dirty" if gi["dirty"] else "")
-    archive_name = f"run_{now.strftime('%Y%m%dT%H%M%SZ')}_{tag}_err{total_error}.png"
-    archive_path = os.path.join(out_dir, archive_name)
-    os.replace(work_png, archive_path)   # rename pending.png → archived run
+    base = f"run_{now.strftime('%Y%m%dT%H%M%SZ')}_{tag}_err{total_error}"
+    archive_path = os.path.join(out_dir, base + ".png")
+    report_path = os.path.join(out_dir, base + ".json")
+    os.replace(work_png, archive_path)
+    os.replace(work_json, report_path)
 
     entry = {
         "timestamp": now.isoformat(timespec="seconds"),
         "git": gi,
         "session": os.path.relpath(session, REPO),
         "video": os.path.relpath(video, REPO),
-        "output": os.path.relpath(archive_path, REPO),   # link to this run's stitched PNG
+        "output": os.path.relpath(archive_path, REPO),   # this run's stitched PNG
+        "report": os.path.relpath(report_path, REPO),    # this run's session report
         "metrics": metrics,
         "totalError": total_error,
+        "scroll": scroll,
         "pass": passed,
     }
 
@@ -145,7 +194,14 @@ def main():
         flag = "ok " if m["within_tol"] else "OFF"
         print(f"  {k:<8}{m['measured']:>10}{m['expected']:>10}{m['error']:>+8}   {flag}")
     print("  " + "-" * 46)
-    print(f"  totalError = {total_error}px    result: {'PASS' if passed else 'FAIL'}")
+    print(f"  totalError = {total_error}px    stitch: {'PASS' if stitch_passed else 'FAIL'}")
+
+    print(f"\n  Scroll events:  gt={scroll['gtEvents']}  algo={scroll['algoEvents']}"
+          f"  countDiff={scroll['eventCountDiff']} (tol {SCROLL_TOLERANCE['eventCountDiff']})")
+    print(f"  dyErrorSum = {scroll['dyErrorSum']}px (tol {SCROLL_TOLERANCE['dyErrorSum']})"
+          f"    pageChanges = {scroll['pageChanges']} (must be {SCROLL_TOLERANCE['pageChanges']})"
+          f"    scroll: {'PASS' if scroll['pass'] else 'FAIL'}")
+    print(f"\n  overall: {'PASS' if passed else 'FAIL'}")
 
     if prev is not None:
         d = total_error - prev["totalError"]
@@ -156,7 +212,8 @@ def main():
     elif history:
         print(f"  ★ new best (or tied) — {total_error}px")
     print(f"\n  logged to {os.path.relpath(RESULTS_LOG, REPO)}  ({len(history)+1} runs total)")
-    print(f"  stitched PNG archived: {entry['output']}\n")
+    print(f"  stitched PNG archived: {entry['output']}")
+    print(f"  session report archived: {entry['report']}\n")
 
     sys.exit(1 if (strict and not passed) else 0)
 

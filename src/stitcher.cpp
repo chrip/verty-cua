@@ -2,28 +2,20 @@
 #include <algorithm>
 #include <iostream>
 
-namespace {
-constexpr double IDENTICAL_FRAME_MAD = 2.0;   // below this, a frame is a dupe/pause
-}
-
 // ── construction ──────────────────────────────────────────────────────────────
 Stitcher::Stitcher(std::string video_path, bool verbose)
     : video_path_(std::move(video_path)), verbose_(verbose)
 {
-    cv::VideoCapture cap = open();
-    if (!cap.isOpened()) return;
-    frame_w_ = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-    frame_h_ = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+    VideoSource probe(video_path_);
+    if (!probe.ok()) return;
+    frame_w_ = probe.width();
+    frame_h_ = probe.height();
+    fps_     = probe.fps();
     if (frame_w_ <= 0 || frame_h_ <= 0) return;
 
     stable_counter_ = cv::Mat::zeros(frame_h_, frame_w_, CV_32SC1);
     fixed_mask_     = cv::Mat::zeros(frame_h_, frame_w_, CV_8UC1);
     ok_ = true;
-}
-
-cv::VideoCapture Stitcher::open() const
-{
-    return cv::VideoCapture(video_path_);
 }
 
 cv::Mat Stitcher::run()
@@ -54,38 +46,34 @@ void Stitcher::accumulate_fixed(const cv::Mat& prev_gray, const cv::Mat& curr_gr
 // Accumulate the fixed-pixel mask and a rough per-frame scroll offset.
 void Stitcher::analyze()
 {
-    cv::VideoCapture cap = open();
-    if (!cap.isOpened()) return;
+    VideoSource video(video_path_);
+    if (!video.ok()) return;
 
-    cv::Mat curr_bgr, curr_gray, prev_gray;
+    VideoSource::Frame f;
+    cv::Mat curr_gray, prev_gray;
     vt_by_frame_.clear();
     max_vt_ = 0;
 
-    if (!cap.read(curr_bgr) || curr_bgr.empty()) return;
-    cv::cvtColor(curr_bgr, curr_gray, cv::COLOR_BGR2GRAY);
+    if (!video.next(f)) return;
+    cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
     prev_gray = curr_gray.clone();
-    curr_bgr.copyTo(first_frame_);   // scroll top
-    curr_bgr.copyTo(last_frame_);
+    f.bgr.copyTo(first_frame_);   // scroll top
+    f.bgr.copyTo(last_frame_);
 
     long vt = 0;
-    vt_by_frame_.push_back(vt);      // frame 0 sits at the document top
+    vt_by_frame_.push_back(vt);   // frame 0 sits at the document top
 
-    while (cap.read(curr_bgr)) {
-        if (curr_bgr.empty()) break;
-        cv::cvtColor(curr_bgr, curr_gray, cv::COLOR_BGR2GRAY);
+    while (video.next(f)) {
+        cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
-        cv::Mat d;
-        cv::absdiff(prev_gray, curr_gray, d);
-        if (cv::mean(d)[0] >= IDENTICAL_FRAME_MAD) {
-            ScrollResult s = scroll_.detect(prev_gray, curr_gray);   // no mask yet
-            if (s.valid && s.dy != 0) {
-                accumulate_fixed(prev_gray, curr_gray);
-                vt = std::max(0L, vt + s.dy);
-            }
+        Transition tr = classifier_.classify(prev_gray, curr_gray);  // no mask yet
+        if (tr.type == TransitionType::Scroll) {
+            accumulate_fixed(prev_gray, curr_gray);
+            vt = std::max(0L, vt + tr.dy);
         }
 
         vt_by_frame_.push_back(vt);
-        if (vt >= max_vt_) { max_vt_ = vt; curr_bgr.copyTo(last_frame_); }
+        if (vt >= max_vt_) { max_vt_ = vt; f.bgr.copyTo(last_frame_); }
         prev_gray = curr_gray.clone();
     }
 
@@ -104,33 +92,35 @@ void Stitcher::analyze()
 }
 
 // ── refine_scrolls (PASS 2) ─────────────────────────────────────────────────
-// Re-detect the scroll offsets, telling the detector which pixels are fixed so
-// it samples only genuine scrolling content. Overwrites the rough pass-1 offsets.
+// Re-classify every transition, telling the detector which pixels are fixed so
+// it samples only genuine scrolling content. Overwrites the rough pass-1
+// offsets; this pass's classifications are the session's authoritative ones
+// (transition counts, scroll events).
 void Stitcher::refine_scrolls()
 {
     if (fixed_mask_.empty()) return;
 
-    cv::VideoCapture cap = open();
-    if (!cap.isOpened()) return;
+    VideoSource video(video_path_);
+    if (!video.ok()) return;
 
-    cv::Mat curr_bgr, curr_gray, prev_gray;
-    if (!cap.read(curr_bgr) || curr_bgr.empty()) return;
-    cv::cvtColor(curr_bgr, curr_gray, cv::COLOR_BGR2GRAY);
+    VideoSource::Frame f;
+    cv::Mat curr_gray, prev_gray;
+    if (!video.next(f)) return;
+    cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
     prev_gray = curr_gray.clone();
 
     std::vector<long> vt_by_frame(1, 0);   // frame 0 at the top
     long vt = 0, max_vt = 0;
+    counts_ = {};
 
-    while (cap.read(curr_bgr)) {
-        if (curr_bgr.empty()) break;
-        cv::cvtColor(curr_bgr, curr_gray, cv::COLOR_BGR2GRAY);
+    while (video.next(f)) {
+        cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
-        cv::Mat d;
-        cv::absdiff(prev_gray, curr_gray, d);
-        if (cv::mean(d)[0] >= IDENTICAL_FRAME_MAD) {
-            ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask_);
-            if (s.valid) vt = std::max(0L, vt + s.dy);
-        }
+        Transition tr = classifier_.classify(prev_gray, curr_gray, fixed_mask_);
+        counts_.add(tr.type);
+        if (tr.type == TransitionType::Scroll)
+            vt = std::max(0L, vt + tr.dy);
+
         vt_by_frame.push_back(vt);
         max_vt = std::max(max_vt, vt);
         prev_gray = curr_gray.clone();
@@ -138,10 +128,32 @@ void Stitcher::refine_scrolls()
 
     vt_by_frame_ = std::move(vt_by_frame);
     max_vt_      = max_vt;
+    build_scroll_events();
 
     if (verbose_)
         std::cout << "[refine] mask-aware maxScroll=" << max_vt_
-                  << "px  docHeight=" << doc_height() << "px\n";
+                  << "px  docHeight=" << doc_height() << "px"
+                  << "  scrollEvents=" << scroll_events_.size()
+                  << "  pageChanges=" << counts_.pageChange
+                  << "  unstable=" << counts_.unstable << "\n";
+}
+
+// ── build_scroll_events ───────────────────────────────────────────────────────
+// The scroll-event trace is derived from the refined per-frame viewport tops:
+// every frame whose vt differs from its predecessor is one scroll step.
+void Stitcher::build_scroll_events()
+{
+    scroll_events_.clear();
+    for (size_t i = 1; i < vt_by_frame_.size(); ++i) {
+        long dy = vt_by_frame_[i] - vt_by_frame_[i - 1];
+        if (dy == 0) continue;
+        scroll_events_.push_back({
+            static_cast<long>(i),
+            static_cast<double>(i) / fps_,
+            static_cast<int>(dy),
+            vt_by_frame_[i],
+        });
+    }
 }
 
 // ── extract_rects ─────────────────────────────────────────────────────────────
@@ -236,22 +248,19 @@ cv::Mat Stitcher::reconstruct()
                             frame_h_ - header_h_ - footer_h_);
     if (interior.width <= 0 || interior.height <= 0) return canvas;
 
-    cv::VideoCapture cap = open();
-    if (!cap.isOpened()) return canvas;
+    VideoSource video(video_path_);
+    if (!video.ok()) return canvas;
 
     // Stitch: place each frame's interior at its recorded scroll offset.
-    cv::Mat frame;
-    long idx = 0;
-    while (cap.read(frame)) {
-        if (frame.empty()) break;
-        long vt = idx < static_cast<long>(vt_by_frame_.size())
-                      ? vt_by_frame_[idx]
+    VideoSource::Frame f;
+    while (video.next(f)) {
+        long vt = f.index < frame_count()
+                      ? vt_by_frame_[f.index]
                       : (vt_by_frame_.empty() ? 0 : vt_by_frame_.back());
-        ++idx;
         vt = std::max(0L, vt);
         int dst_y = static_cast<int>(vt) + interior.y;
         if (dst_y + interior.height > static_cast<int>(doc_h)) continue;   // safety
-        frame(interior).copyTo(canvas(cv::Rect(interior.x, dst_y, interior.width, interior.height)));
+        f.bgr(interior).copyTo(canvas(cv::Rect(interior.x, dst_y, interior.width, interior.height)));
     }
 
     // Stamp the fixed chrome on top: sidebars first, then header/footer, so the

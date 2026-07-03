@@ -7,6 +7,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "stitcher.hpp"
+#include "session_report.hpp"
 
 namespace fs = std::filesystem;
 
@@ -14,12 +15,15 @@ namespace fs = std::filesystem;
 struct Args {
     std::string input;
     std::string output  = "output.png";
+    std::string report;                  // session-report JSON path ("" = off)
     bool        verbose = false;
 };
 
 static void print_usage(const char* prog) {
-    std::cout << "Usage: " << prog << " <input.mp4> [-o output.png] [-v]\n"
-              << "  -o  output image path  (default: output.png)\n"
+    std::cout << "Usage: " << prog << " <input.mp4> [-o output.png] [-r report.json] [-v]\n"
+              << "  -o  output image path            (default: output.png)\n"
+              << "  -r  write session report (JSON): scroll events + timestamps,\n"
+              << "      fixed-element rects, transition tally\n"
               << "  -v  verbose logging\n";
 }
 
@@ -31,6 +35,7 @@ static Args parse_args(int argc, char* argv[]) {
         std::string arg = argv[i];
         if      (arg == "-v")                     a.verbose = true;
         else if (arg == "-o" && i + 1 < argc)     a.output  = argv[++i];
+        else if (arg == "-r" && i + 1 < argc)     a.report  = argv[++i];
         else { std::cerr << "Unknown argument: " << arg << "\n"; print_usage(argv[0]); std::exit(1); }
     }
     return a;
@@ -57,6 +62,14 @@ int main(int argc, char* argv[])
     if (!cv::imwrite(args.output, result)) {
         std::cerr << "[main] failed to write: " << args.output << "\n";
         return 1;
+    }
+
+    if (!args.report.empty()) {
+        if (!SessionReport::write(args.report, args.input, stitcher)) {
+            std::cerr << "[main] failed to write report: " << args.report << "\n";
+            return 1;
+        }
+        std::cout << "[main] report: " << fs::absolute(args.report) << "\n";
     }
 
     double secs = std::chrono::duration<double>(

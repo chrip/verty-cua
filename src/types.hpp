@@ -8,6 +8,8 @@ constexpr int SCROLL_STEP = 1;          // pixel step for scroll search
 constexpr int SCROLL_SAMPLES = 120;     // blocks sampled for scroll histogram
 constexpr int SAD_THRESHOLD = 18;       // max mean absolute diff to call a match
 constexpr int FIXED_CONFIRM_FRAMES = 6; // stable scroll events before a pixel is FIXED
+constexpr double IDENTICAL_FRAME_MAD = 2.0;      // below: duplicate frame / pause
+constexpr double PAGE_CHANGE_MIN_FRACTION = 0.4; // changed-area fraction ⇒ new page
 
 // ── Scroll detection result ───────────────────────────────────────────────────
 struct ScrollResult {

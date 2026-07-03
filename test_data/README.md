@@ -12,11 +12,12 @@ of every frame so the stitcher's output can be scored against known truth.
 |------|------------|
 | `scroll_page.html` | Website 1 — fixed header/footer/left/right chrome + a tall scrolling article. Links → page 2. |
 | `scroll_page_2.html` | Website 2 — **byte-identical chrome**, a *different* article, links → page 1. |
-| `record_session.mjs` | Records a scroll session of a page → JPG frames + `ground_truth.json` (headless Chromium via CDP). |
+| `record_session.mjs` | Records a session (scrolls, hovers, clicks/navigations) → JPG frames + `ground_truth.json` (headless Chromium via CDP). Plans: `single`, `multipage`. |
 | `frames_to_mp4.py` | Assembles recorded JPG frames into an `.mp4` (OpenCV `mp4v`, no ffmpeg needed). |
-| `test_stitch_session.py` | Regression benchmark: runs the stitcher on a session and scores its output against the ground truth. |
+| `test_stitch_session.py` | Regression benchmark: runs the stitcher on a session and scores stitch + scroll events against the ground truth. |
 | `stitch_test_results.jsonl` | Append-only history of benchmark runs — track `totalError` as the algorithm improves. |
-| `session_page1/` | Example generated dataset (frames + mp4 + ground truth). |
+| `session_page1/` | Generated single-page dataset (frames + mp4 + ground truth) — the stitch benchmark session. |
+| `session_multipage/` | Generated multi-page dataset: page 1 → scroll → hovers → click → page 2 (Milestone-3 fixture). |
 
 Both pages have the same layout dimensions: **header 72px, footer 56px, left
 sidebar 240px, right sidebar 180px**, at a 1280×900 viewport. Every link on a
@@ -47,12 +48,31 @@ python3 frames_to_mp4.py
 
 ### Recording the other page
 
-`record_session.mjs [pageFile] [outDir]` — both args optional:
+`record_session.mjs [--plan single|multipage] [pageFile] [outDir]` — all optional:
 
 ```bash
 node record_session.mjs scroll_page_2.html session_page2
 python3 frames_to_mp4.py session_page2          # → session_page2/session.mp4
 ```
+
+### Recording the multi-page session (Milestone-3 fixture)
+
+```bash
+node record_session.mjs --plan multipage        # → session_multipage/
+python3 frames_to_mp4.py session_multipage      # → session_multipage/session.mp4
+```
+
+The `multipage` plan: arrive on page 1 → scroll a little (eased) → read →
+hover a header link, a sidebar link, and the CTA (the real `:hover` CSS lands
+in the video — non-scroll diffs the classifier must not misread) → **click the
+CTA** (a real navigation to page 2, dispatched as CDP mouse events) → park the
+mouse → stay on page 2 for ~2.5 s.
+
+Its `ground_truth.json` uses the **multi-page schema**: `pages[]` (per page:
+`pageHeight`, `maxScrollY`, `fixed`, `regions`), per-frame `{page, scrollY}`
+(`page: null` marks navigation-transition frames), `events[]` (hover ranges,
+click, pageLoaded), and `navigations[]` (`{fromPage, toPage, clickFrame,
+firstStableFrame}`). Scoring against it is Milestone-3 work.
 
 ## What a recording produces
 
@@ -122,26 +142,43 @@ delta vs. the previous run, and the best-so-far, e.g.:
 ```
   metric    measured  expected   error   status
   width         1280      1280      +0   ok
-  height        3253      3253      +0   ok
-  header          80        72      +8   ok
+  height        3251      3253      -2   ok
+  header          78        72      +6   ok
   footer          69        56     +13   ok
-  left           280       240     +40   OFF
-  right          224       180     +44   OFF
-  totalError = 105px    result: FAIL
+  left           279       240     +39   OFF
+  right          219       180     +39   OFF
+  totalError = 99px    stitch: FAIL
+
+  Scroll events:  gt=252  algo=246  countDiff=6 (tol 8)
+  dyErrorSum = 6px (tol 12)    pageChanges = 0 (must be 0)    scroll: PASS
 ```
 
-**Baseline (git `b22c9fd`): totalError 105px** — width/height exact; the four
-fixed regions are over-detected (the pixel-perfect / content-aware refinement
-work targets exactly this). As that lands, `totalError` should drop toward 0.
-Tolerances for the pass/fail flag live in `TOLERANCE` at the top of the script
-(size exact, fixed regions within 1 block = 16px).
+**Stitch reference (three-pass pipeline): totalError 99px** — width/height
+near-exact; the four fixed bands over-detect on flat margins adjacent to the
+chrome. That over-detection is a **documented non-decision**: the margin only
+absorbs stable pixels and is sourced from the top/bottom frame, so it is
+invisible in the output; a content-aware detector was evaluated and rejected
+(see `ROADMAP.md`). Tolerances for the pass/fail flags live in `TOLERANCE` /
+`SCROLL_TOLERANCE` at the top of the script.
 
-Each run's stitched PNG is **archived** to
-`<session>/outputs/run_<utc>_<commit>_err<N>.png` and linked from the log
-entry's `output` field, so you can eyeball the actual reconstruction for any
-past run — not just the numbers. (The archived PNGs are gitignored local
-artifacts; the committed record is `stitch_test_results.jsonl`, with each run's
-key metrics also encoded in its filename.)
+**Scroll-event score (Milestone 2):** the tool's `-r` session report is checked
+against the recorder's per-frame scroll log:
+- `dyErrorSum` — Σ |dy_algo − dy_gt| over the union of scrolling frames,
+- `eventCountDiff` — |#events difference|,
+- `pageChanges` — PAGE_CHANGE transitions; **must be 0** on a single-page
+  session (false-positive guard).
+
+Baseline (2026-07-03): `dyErrorSum=6`, `eventCountDiff=6`, `pageChanges=0` —
+all six misses are `|dy|=1` steps, rejected as noise by the ScrollDetector's
+`|dy|≤1` gate **by design**; they also account for the stitch's −2px height.
+
+Each run's stitched PNG **and session report** are archived to
+`<session>/outputs/run_<utc>_<commit>_err<N>.{png,json}` and linked from the
+log entry's `output`/`report` fields, so you can inspect the actual
+reconstruction and event trace for any past run — not just the numbers. (The
+archived files are gitignored local artifacts; the committed record is
+`stitch_test_results.jsonl`, with each run's key metrics also encoded in its
+filename.)
 
 ## Tunables
 
