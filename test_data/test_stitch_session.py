@@ -145,11 +145,20 @@ def score_ghost(gt, session, stitch_png):
     # content interior is compared — chrome columns/rows are cropped away.
     valid = np.zeros((y1, x1), dtype=bool)
     valid[y0:y1, x0:x1] = True
-    # Animated regions are legitimately different (another animation instant).
+    # Animated regions are legitimately different (another animation instant);
+    # conditionally-fixed overlays are stamped once, anchored to their viewport
+    # edge — the chrome-hidden reference has neither.
     for d in gt.get("dynamicRegions", []):
         if d.get("kind") == "animated":
             b = d["doc"]
             ya, yb = max(0, int(b["y"]) - 8), min(y1, int(b["y"] + b["height"]) + 8)
+            xa, xb = max(0, int(b["x"]) - 8), min(x1, int(b["x"] + b["width"]) + 8)
+            valid[ya:yb, xa:xb] = False
+        elif d.get("kind") == "conditional-fixed":
+            b = d["viewport"]
+            bottom = b["y"] + b["height"] / 2 > vh / 2
+            doc_y = (stitch.shape[0] - (vh - int(b["y"]))) if bottom else int(b["y"])
+            ya, yb = max(0, doc_y - 8), min(y1, doc_y + int(b["height"]) + 8)
             xa, xb = max(0, int(b["x"]) - 8), min(x1, int(b["x"] + b["width"]) + 8)
             valid[ya:yb, xa:xb] = False
 

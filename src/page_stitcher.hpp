@@ -62,6 +62,8 @@ public:
     [[nodiscard]] const std::vector<VisitTrace>&  visits() const { return visits_; }
     [[nodiscard]] const std::vector<FixedRect>&   fixed_rects() const { return rects_; }
     [[nodiscard]] const std::vector<ScrollEvent>& scroll_events() const { return scroll_events_; }
+    // Interior viewport-fixed elements (floating buttons etc.), viewport coords.
+    [[nodiscard]] const std::vector<cv::Rect>& overlays() const { return overlays_; }
     [[nodiscard]] long doc_height() const { return max_vt_ + frame_h_; }
 
 private:
@@ -84,6 +86,7 @@ private:
     cv::Mat last_frame_;       // frame at the deepest vt    — source for the footer
 
     std::vector<FixedRect> rects_;
+    std::vector<cv::Rect>  overlays_;
     int header_h_ = 0, footer_h_ = 0, left_w_ = 0, right_w_ = 0;
 
     // Opens the video positioned at the given visit's first frame.
@@ -93,6 +96,7 @@ private:
     void refine_visit(const PageVisit& v, long vt_start);    // pass 2
 
     void extract_rects();
+    void extract_overlays();
     void append_scroll_events(const VisitTrace& trace);
     void stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const;
 };

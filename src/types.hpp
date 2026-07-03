@@ -36,6 +36,16 @@ constexpr int INTERIOR_ROW_MARGIN = 12;
 // content (animation, floating buttons) is frozen at its first observation
 // instead of being smeared across the page.
 constexpr double ROW_CONFLICT_MAD = 10.0;
+
+// ── Interior fixed overlays (floating buttons, cookie banners) ───────────────
+// A viewport-fixed element that is NOT edge-anchored appears in the pixel
+// fixed mask as an interior blob. Genuine overlays are compact and textured;
+// stable whitespace (the historical false-positive that ruled out floating
+// rects) is sprawling and uniform, so it fails these filters.
+constexpr int    OVERLAY_MIN_AREA   = 576;   // ≥ 24×24 px of confirmed-fixed pixels
+constexpr double OVERLAY_MIN_FILL   = 0.5;   // fixed-pixel fill ratio of the bbox
+constexpr double OVERLAY_MIN_STDDEV = 8.0;   // texture: uniform blobs are not UI
+constexpr int    OVERLAY_PAD        = 4;     // bbox padding (anti-aliasing, shadow)
 constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-change window
 
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────

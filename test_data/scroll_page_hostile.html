@@ -209,8 +209,13 @@ function dynamicRegions() {
   const out = [];
   document.querySelectorAll('[data-dynamic]').forEach(el =>
     out.push({ kind: 'animated', doc: docBox(el) }));
+  // The button is display:none until 300px of scrolling — force it visible
+  // for the measurement so the ground truth carries its real bounding box.
   const btn = document.getElementById('back-to-top');
+  const wasVisible = btn.classList.contains('visible');
+  btn.classList.add('visible');
   const b = btn.getBoundingClientRect();   // viewport coords (position:fixed)
+  if (!wasVisible) btn.classList.remove('visible');
   out.push({ kind: 'conditional-fixed', appearsAfterScrollY: 300,
              viewport: { x: r(b.left), y: r(b.top), width: r(b.width), height: r(b.height) } });
   return out;

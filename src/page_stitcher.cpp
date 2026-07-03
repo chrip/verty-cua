@@ -26,6 +26,8 @@ void PageStitcher::add_visit(const PageVisit& visit, long vt_start)
     if (frame_w_ <= 0 || frame_h_ <= 0) return;
     analyze_visit(visit, vt_start);
     refine_visit(visit, vt_start);
+    // After refine: needs the band-source frames for its texture filter.
+    extract_overlays();
 }
 
 // ── analyze_visit (PASS 1) ────────────────────────────────────────────────────
@@ -170,6 +172,99 @@ void PageStitcher::extract_rects()
     if (right_w_ > 0 && mid_h > 0) rects_.push_back({ cv::Rect(W - right_w_, header_h_, right_w_, mid_h), FixedKind::Right });
 }
 
+// ── extract_overlays ──────────────────────────────────────────────────────────
+// Interior fixed blobs = viewport-fixed elements that are not edge-anchored
+// (floating buttons, cookie banners). Filters separate genuine overlays from
+// stable whitespace, the historical false positive: overlays are COMPACT
+// (fixed-pixel fill of the bbox) and TEXTURED (whitespace is uniform).
+void PageStitcher::extract_overlays()
+{
+    overlays_.clear();
+    if (last_frame_.empty() && first_frame_.empty()) return;
+
+    cv::Mat rem = fixed_mask_.clone();
+    const int W = frame_w_, H = frame_h_;
+    if (header_h_ > 0) rem(cv::Rect(0, 0, W, header_h_)).setTo(0);
+    if (footer_h_ > 0) rem(cv::Rect(0, H - footer_h_, W, footer_h_)).setTo(0);
+    if (left_w_  > 0)  rem(cv::Rect(0, 0, left_w_, H)).setTo(0);
+    if (right_w_ > 0)  rem(cv::Rect(W - right_w_, 0, right_w_, H)).setTo(0);
+
+    cv::morphologyEx(rem, rem, cv::MORPH_OPEN,
+                     cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
+
+    // Stable whitespace is fixed too and CONNECTS to any overlay it touches,
+    // sprawling the component until the compactness test fails. Seed the
+    // components from TEXTURED fixed pixels only (whitespace has no texture),
+    // then measure compactness against the full fixed mask.
+    const cv::Mat& sample = last_frame_.empty() ? first_frame_ : last_frame_;
+    cv::Mat gray, lap, textured, seed;
+    cv::cvtColor(sample, gray, cv::COLOR_BGR2GRAY);
+    cv::Laplacian(gray, lap, CV_16S, 3);
+    cv::convertScaleAbs(lap, lap);
+    cv::compare(lap, 12, textured, cv::CMP_GT);
+    cv::dilate(textured, textured,
+               cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)),
+               cv::Point(-1, -1), 2);
+    cv::bitwise_and(rem, textured, seed);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(seed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    std::vector<cv::Rect> candidates;
+    for (const auto& c : contours) {
+        cv::Rect b = cv::boundingRect(c);
+        if (cv::countNonZero(rem(b)) < OVERLAY_MIN_AREA) continue;
+        const double fill = cv::countNonZero(rem(b)) / static_cast<double>(b.area());
+        if (fill < OVERLAY_MIN_FILL) continue;
+
+        cv::Scalar mean, stddev;
+        cv::meanStdDev(gray(b), mean, stddev);
+        if (stddev[0] < OVERLAY_MIN_STDDEV) continue;   // uniform: not UI
+
+        b.x = std::max(0, b.x - OVERLAY_PAD);
+        b.y = std::max(0, b.y - OVERLAY_PAD);
+        b.width  = std::min(W - b.x, b.width  + 2 * OVERLAY_PAD);
+        b.height = std::min(H - b.y, b.height + 2 * OVERLAY_PAD);
+        candidates.push_back(b);
+    }
+    if (candidates.empty()) return;
+
+    // Verification: a genuine viewport-fixed overlay is IDENTICAL in two
+    // frames whose scroll positions are far apart — different document content
+    // passed underneath it. Slowly-varying scrolled content (e.g. low-contrast
+    // periodic textures that survive the per-transition stability test) is not.
+    if (max_vt_ < 200) return;   // page barely scrolled: cannot verify → none
+    long frameA = -1, frameB = -1, bestA = LONG_MAX, bestB = LONG_MAX;
+    for (const VisitTrace& t : visits_) {
+        for (size_t i = 0; i < t.vt_by_frame.size(); ++i) {
+            const long vt = t.vt_by_frame[i];
+            const long fi = t.visit.firstFrame + static_cast<long>(i);
+            if (std::abs(vt - max_vt_ / 3)     < bestA) { bestA = std::abs(vt - max_vt_ / 3);     frameA = fi; }
+            if (std::abs(vt - 2 * max_vt_ / 3) < bestB) { bestB = std::abs(vt - 2 * max_vt_ / 3); frameB = fi; }
+        }
+    }
+    if (frameA < 0 || frameB < 0 || frameA == frameB) return;
+
+    auto read_frame = [&](long index) {
+        VideoSource video(video_path_);
+        VideoSource::Frame f;
+        if (!video.ok() || !video.skip_to(index) || !video.next(f)) return cv::Mat();
+        return f.bgr;
+    };
+    const cv::Mat a = read_frame(frameA), b2 = read_frame(frameB);
+    if (a.empty() || b2.empty()) return;
+
+    for (const cv::Rect& b : candidates) {
+        const double mad = cv::norm(a(b), b2(b), cv::NORM_L1) / (3.0 * b.area());
+        if (mad >= SAD_THRESHOLD) continue;   // content moved: not an overlay
+        overlays_.push_back(b);
+        if (verbose_)
+            std::cout << "[page " << page_id_ << " overlay] "
+                      << b.width << "×" << b.height << " at viewport ("
+                      << b.x << "," << b.y << ")  verifyMAD=" << mad << "\n";
+    }
+}
+
 // ── stamp ─────────────────────────────────────────────────────────────────────
 // Paste one fixed band onto the final canvas at its document position. Header and
 // sidebars are sourced from the shallowest-scroll frame, the footer from the
@@ -236,13 +331,16 @@ cv::Mat PageStitcher::reconstruct()
     // The scroll content is the interior rectangle inside the fixed bands.
     // Copying it wholesale (rather than masking the raw fixed pixels) avoids both
     // holes from false-positive fixed pixels and the need for a per-frame mask.
-    // Rows are cropped INTERIOR_ROW_MARGIN inside the bands so a slightly
+    // Rows are cropped INTERIOR_ROW_MARGIN inside a DETECTED band so a slightly
     // under-detected band cannot smear chrome residue across the stitch; the
     // extended header/footer stamps close the margin at the document ends.
-    const int m = INTERIOR_ROW_MARGIN;
-    const cv::Rect interior(left_w_, header_h_ + m,
+    // Without a detected band there is no residue to guard against — and no
+    // stamp to cover the margin (a no-scroll visit would get blank edge rows).
+    const int top_m = header_h_ > 0 ? INTERIOR_ROW_MARGIN : 0;
+    const int bot_m = footer_h_ > 0 ? INTERIOR_ROW_MARGIN : 0;
+    const cv::Rect interior(left_w_, header_h_ + top_m,
                             frame_w_ - left_w_ - right_w_,
-                            frame_h_ - header_h_ - footer_h_ - 2 * m);
+                            frame_h_ - header_h_ - footer_h_ - top_m - bot_m);
     if (interior.width <= 0 || interior.height <= 0) return canvas;
 
     // Conflict-frozen writes: a document row, once stitched, is refreshed by a
@@ -252,14 +350,32 @@ cv::Mat PageStitcher::reconstruct()
     // self-consistent). A row that matches at NO nearby offset holds dynamic
     // content (animation, a floating button over changing text) and is frozen
     // at its first observation instead of being smeared across the page.
-    auto row_mad = [&](const cv::Mat& a, const cv::Mat& b) {
-        return cv::norm(a, b, cv::NORM_L1) / (3.0 * interior.width);
+    // Overlay column masks per interior row: a row crossing an overlay copies
+    // (and compares) only the columns outside it. Content under the overlay is
+    // filled by frames where that document row was NOT under it — the overlay
+    // is viewport-fixed while the content scrolls past.
+    std::vector<cv::Mat> row_mask(interior.height);   // empty = full row
+    for (const cv::Rect& o : overlays_) {
+        for (int fy = std::max(o.y, interior.y);
+             fy < std::min(o.y + o.height, interior.y + interior.height); ++fy) {
+            cv::Mat& m = row_mask[fy - interior.y];
+            if (m.empty()) m = cv::Mat(1, interior.width, CV_8UC1, cv::Scalar(255));
+            const int a = std::max(0, o.x - interior.x);
+            const int b = std::min(interior.width, o.x + o.width - interior.x);
+            if (a < b) m.colRange(a, b).setTo(0);
+        }
+    }
+
+    auto row_mad = [&](const cv::Mat& a, const cv::Mat& b, const cv::Mat& mask) {
+        const double n = mask.empty() ? interior.width : cv::countNonZero(mask);
+        if (n <= 0) return 0.0;
+        return cv::norm(a, b, cv::NORM_L1, mask) / (3.0 * n);
     };
-    auto explainable = [&](const cv::Mat& incoming_row, int doc_row) {
+    auto explainable = [&](const cv::Mat& incoming_row, int doc_row, const cv::Mat& mask) {
         for (int s = -2; s <= 2; ++s) {
             const int y = doc_row + s;
             if (y < 0 || y >= static_cast<int>(doc_h)) continue;
-            if (row_mad(incoming_row, canvas(cv::Rect(interior.x, y, interior.width, 1)))
+            if (row_mad(incoming_row, canvas(cv::Rect(interior.x, y, interior.width, 1)), mask)
                     <= ROW_CONFLICT_MAD)
                 return true;
         }
@@ -283,12 +399,14 @@ cv::Mat PageStitcher::reconstruct()
             const cv::Mat incoming = f.bgr(interior);
             for (int row = 0; row < interior.height; ++row) {
                 const int doc_row = dst_y + row;
+                const cv::Mat& mask = row_mask[row];
                 cv::Mat dst = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
                 if (row_written[doc_row]
-                    && row_mad(incoming.row(row), dst) > ROW_CONFLICT_MAD
-                    && !explainable(incoming.row(row), doc_row))
+                    && row_mad(incoming.row(row), dst, mask) > ROW_CONFLICT_MAD
+                    && !explainable(incoming.row(row), doc_row, mask))
                     continue;   // dynamic content: keep the first observation
-                incoming.row(row).copyTo(dst);
+                if (mask.empty()) incoming.row(row).copyTo(dst);
+                else              incoming.row(row).copyTo(dst, mask);
                 row_written[doc_row] = 1;
             }
         }
@@ -299,6 +417,21 @@ cv::Mat PageStitcher::reconstruct()
     for (FixedKind k : { FixedKind::Left, FixedKind::Right, FixedKind::Header, FixedKind::Footer })
         for (const FixedRect& fr : rects_)
             if (fr.kind == k) stamp(canvas, fr, doc_h);
+
+    // Stamp each overlay ONCE, anchored to the viewport edge it sits nearest
+    // (a bottom-pinned floating button keeps its distance from the bottom of
+    // the final screenshot, like the footer). Source: the frame nearest that
+    // edge of the document, where the overlay is guaranteed on-screen.
+    for (const cv::Rect& o : overlays_) {
+        const bool bottom_anchored = o.y + o.height / 2 > frame_h_ / 2;
+        const cv::Mat& src_frame = bottom_anchored ? last_frame_ : first_frame_;
+        if (src_frame.empty()) continue;
+        const int dst_y = bottom_anchored
+                              ? static_cast<int>(doc_h) - (frame_h_ - o.y)
+                              : o.y;
+        if (dst_y < 0 || dst_y + o.height > static_cast<int>(doc_h)) continue;
+        src_frame(o).copyTo(canvas(cv::Rect(o.x, dst_y, o.width, o.height)));
+    }
 
     return canvas;
 }
