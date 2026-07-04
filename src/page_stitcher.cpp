@@ -210,6 +210,24 @@ void PageStitcher::extract_overlays()
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(seed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
+    // An overlay may reach into an over-detected band (its margin is stable
+    // whitespace, blanked above), which would crop the stamped element. Grow
+    // each candidate on the UNBLANKED evidence — fixed AND textured pixels —
+    // until the evidence stops (capped; the two-frame verification still
+    // guards the final rect).
+    cv::Mat evidence;
+    cv::bitwise_and(fixed_mask_, textured, evidence);
+    auto grow = [&](cv::Rect b) {
+        constexpr int CAP = 32;
+        auto col = [&](int x) { return cv::countNonZero(evidence(cv::Rect(x, b.y, 1, b.height))); };
+        auto row = [&](int y) { return cv::countNonZero(evidence(cv::Rect(b.x, y, b.width, 1))); };
+        for (int i = 0; i < CAP && b.x + b.width  < W && col(b.x + b.width) >= std::max(3, b.height / 5); ++i) ++b.width;
+        for (int i = 0; i < CAP && b.x > 0            && col(b.x - 1)       >= std::max(3, b.height / 5); ++i) { --b.x; ++b.width; }
+        for (int i = 0; i < CAP && b.y + b.height < H && row(b.y + b.height) >= std::max(3, b.width / 5); ++i) ++b.height;
+        for (int i = 0; i < CAP && b.y > 0            && row(b.y - 1)       >= std::max(3, b.width / 5); ++i) { --b.y; ++b.height; }
+        return b;
+    };
+
     std::vector<cv::Rect> candidates;
     for (const auto& c : contours) {
         cv::Rect b = cv::boundingRect(c);
@@ -221,6 +239,7 @@ void PageStitcher::extract_overlays()
         cv::meanStdDev(gray(b), mean, stddev);
         if (stddev[0] < OVERLAY_MIN_STDDEV) continue;   // uniform: not UI
 
+        b = grow(b);
         b.x = std::max(0, b.x - OVERLAY_PAD);
         b.y = std::max(0, b.y - OVERLAY_PAD);
         b.width  = std::min(W - b.x, b.width  + 2 * OVERLAY_PAD);
