@@ -131,6 +131,31 @@ scroll-event score. Baseline (2026-07-03): **totalError 82px** — boundary
 error 0, page heights −2/0, dyErrorSum 2px; sidebar bands +39 (the documented
 over-detection).
 
+## Real-world corpus (production sessions)
+
+`realworld/` holds five REAL session videos from the DOM-based production
+system (2021-01-18 portal dump; **webs elements only**), each with the
+production system's stitched screenshots as reference outputs
+(`production/*_orig.jpg`). The binaries are user data and are **not in git**
+— `realworld_manifest.json` (committed) defines the corpus with source paths,
+so the suite can be re-imported from the dump. Scoring is structural (runs,
+≥1 page, plausible geometry) plus a printed comparison against the production
+reference; `--all` includes these sessions.
+
+| case | content | video | production ref |
+|------|---------|-------|----------------|
+| rw1_newsportal  | news portal, deep scroll        | 27s  | 1 stitch, 4744px |
+| rw2_textpage    | dense text page                 | 14s  | 1 stitch, 3984px |
+| rw3_landing     | marketing site, 3 pages         | 67s  | 3 stitches |
+| rw4_portal      | dark dashboard, very deep       | 113s | 4 stitches, 11624px max |
+| rw5_mobileframe | mobile flow in phone mockup     | 93s  | 19 stitches |
+
+First measured baseline (2026-07-04): all five PASS structurally.
+rw2's main stitch is **1px** off the production height (3980 vs 3981);
+rw5 tracks production per-page heights within 8px. Known gaps feeding M7:
+over-segmentation on slow progressive page loads, and large scroll jumps
+beyond MAX_SCROLL (rw4: 4890 vs 11624).
+
 ## What a recording produces
 
 ```

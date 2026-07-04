@@ -43,6 +43,18 @@ real-world corpus". Milestone 7 is the dedicated hardening pass, but robustness
 is earned continuously — a milestone that only works on synthetic fixtures is
 not done.
 
+**Corpus arrived (2026-07-04):** five production sessions (webs elements, with
+the DOM system's stitches as references) live in `test_data/realworld/` —
+see `realworld_manifest.json` and test_data/README.md. First baseline: all
+five pass structurally; rw2's stitch is 1px off the production height; rw5
+(mobile-in-frame) tracks production per-page heights within 8px. Measured
+gaps that define the M7 backlog: (a) **over-segmentation on slow progressive
+page loads** (real navigations render over many frames; our instant file://
+fixtures never exercised this), (b) **large scroll jumps** beyond
+MAX_SCROLL=400 are rejected and truncate deep pages (rw4: 4890 vs 11624),
+(c) production sensitivity semantics differ per web element
+(screenshotSensitivity column) — page-count comparisons are soft.
+
 ---
 
 ## Development model: built by AI coding agents

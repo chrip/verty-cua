@@ -1,0 +1,211 @@
+{
+  "note": "Real production sessions (webs elements only) from the DOM-based production system, 2021-01-18 portal dump. Binaries are NOT in git (user data); this manifest defines the corpus. Production stitches are the DOM-based reference outputs.",
+  "sourceRoot": "private-recordings",
+  "cases": [
+    {
+      "name": "rw1_newsportal",
+      "description": "news portal, single page, deep scroll",
+      "source": "newsportal.mp4",
+      "video": {
+        "w": 1918,
+        "h": 956,
+        "frames": 124,
+        "fps": 4.63
+      },
+      "productionStitches": [
+        {
+          "file": "newsportal_reference_1.jpg",
+          "w": 1920,
+          "h": 4744
+        }
+      ]
+    },
+    {
+      "name": "rw2_textpage",
+      "description": "dense text page, short single-page session",
+      "source": "textpage.mp4",
+      "video": {
+        "w": 1918,
+        "h": 946,
+        "frames": 63,
+        "fps": 4.63
+      },
+      "productionStitches": [
+        {
+          "file": "textpage_reference_1.jpg",
+          "w": 1920,
+          "h": 3984
+        }
+      ]
+    },
+    {
+      "name": "rw3_landing",
+      "description": "marketing landing site, 3 pages",
+      "source": "landing.mp4",
+      "video": {
+        "w": 1916,
+        "h": 956,
+        "frames": 250,
+        "fps": 3.74
+      },
+      "productionStitches": [
+        {
+          "file": "landing_reference_1.jpg",
+          "w": 1920,
+          "h": 6520
+        },
+        {
+          "file": "landing_reference_2.jpg",
+          "w": 1920,
+          "h": 960
+        },
+        {
+          "file": "landing_reference_3.jpg",
+          "w": 1920,
+          "h": 4320
+        }
+      ]
+    },
+    {
+      "name": "rw4_portal",
+      "description": "dark dashboard portal, 4 pages, very deep scroll",
+      "source": "portal.mp4",
+      "video": {
+        "w": 1918,
+        "h": 930,
+        "frames": 438,
+        "fps": 3.89
+      },
+      "productionStitches": [
+        {
+          "file": "portal_reference_1.jpg",
+          "w": 1920,
+          "h": 1432
+        },
+        {
+          "file": "portal_reference_2.jpg",
+          "w": 1920,
+          "h": 11624
+        },
+        {
+          "file": "portal_reference_3.jpg",
+          "w": 1920,
+          "h": 1456
+        },
+        {
+          "file": "portal_reference_4.jpg",
+          "w": 1920,
+          "h": 11624
+        }
+      ]
+    },
+    {
+      "name": "rw5_mobileframe",
+      "description": "mobile flow inside phone mockup, 19 pages (hard case)",
+      "source": "mobileframe.mp4",
+      "video": {
+        "w": 1918,
+        "h": 996,
+        "frames": 428,
+        "fps": 4.62
+      },
+      "productionStitches": [
+        {
+          "file": "mobileframe_reference_1.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_2.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_3.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_4.jpg",
+          "w": 1920,
+          "h": 1880
+        },
+        {
+          "file": "mobileframe_reference_5.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_6.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_7.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_8.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_9.jpg",
+          "w": 1920,
+          "h": 3824
+        },
+        {
+          "file": "mobileframe_reference_10.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_11.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_12.jpg",
+          "w": 1920,
+          "h": 2024
+        },
+        {
+          "file": "mobileframe_reference_13.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_14.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_15.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_16.jpg",
+          "w": 1920,
+          "h": 1000
+        },
+        {
+          "file": "mobileframe_reference_17.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_18.jpg",
+          "w": 1920,
+          "h": 1016
+        },
+        {
+          "file": "mobileframe_reference_19.jpg",
+          "w": 1920,
+          "h": 1016
+        }
+      ]
+    }
+  ]
+}

@@ -4,3 +4,6 @@ build/
 
 # generated recording sessions (frames/*.jpg, session.mp4, outputs/, ground_truth.json)
 test_data/session_*/
+
+# real-world production sessions (user data — never committed; see realworld_manifest.json)
+test_data/realworld/

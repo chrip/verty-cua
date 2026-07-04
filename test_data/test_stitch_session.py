@@ -353,19 +353,60 @@ def print_multipage(checks, total_error, seg_pass, fixed_na, scroll):
           f"    scroll: {'PASS' if scroll['pass'] else 'FAIL'}")
 
 
+# ── Real-world sessions (no ground truth; production stitches as reference) ──
+def score_realworld(report, session):
+    """Structural scoring for real screencasts: the tool must run, segment into
+    ≥1 page and produce plausible geometry. The DOM-based production stitches
+    (production/*.jpg) are printed for comparison — they are a reference, not
+    ground truth (production sensitivity settings differ per web element)."""
+    vh = report["video"]["viewport"]["h"]
+    pages = report.get("pages", [])
+    checks = {
+        "ran":        True,
+        "pages":      len(pages),
+        "pagesOk":    len(pages) >= 1,
+        "heightsOk":  all(p["docHeight"] >= vh for p in pages),
+        "scrollEvents": len(report.get("scrollEvents", [])),
+    }
+    checks["pass"] = checks["pagesOk"] and checks["heightsOk"]
+
+    production = []
+    for j in sorted(glob.glob(os.path.join(session, "production", "*_orig.jpg"))):
+        img = cv2.imread(j, cv2.IMREAD_REDUCED_COLOR_8)
+        if img is not None:
+            production.append({"file": os.path.basename(j),
+                               "w": img.shape[1] * 8, "h": img.shape[0] * 8})
+    return checks, production
+
+
+def print_realworld(checks, production, report):
+    print(f"  pages={checks['pages']}  scrollEvents={checks['scrollEvents']}"
+          f"  heightsOk={checks['heightsOk']}    structural: "
+          f"{'PASS' if checks['pass'] else 'FAIL'}")
+    ours = [(p['width'], p['docHeight']) for p in report.get('pages', [])]
+    print(f"  our stitches:        {ours}")
+    print(f"  production (DOM ref): {[(p['w'], p['h']) for p in production]}")
+
+
+import glob
+
+
 # ── --all: score every recorded session, print a summary ─────────────────────
 def run_all(strict):
     import glob as _glob
     sessions = sorted(d for d in _glob.glob(os.path.join(HERE, "session_*"))
                       if os.path.exists(os.path.join(d, "ground_truth.json")))
+    sessions += sorted(d for d in _glob.glob(os.path.join(HERE, "realworld", "*"))
+                       if os.path.exists(os.path.join(d, "session.mp4")))
     if not sessions:
         die("no recorded sessions found (session_*/ground_truth.json)")
     results = []
     for s in sessions:
         # Children always run strict so the summary shows true pass/fail.
-        cmd = [sys.executable, os.path.abspath(__file__), os.path.basename(s), "--strict"]
+        rel = os.path.relpath(s, HERE)
+        cmd = [sys.executable, os.path.abspath(__file__), rel, "--strict"]
         rc = subprocess.run(cmd).returncode
-        results.append((os.path.basename(s), rc))
+        results.append((rel, rc))
     print("═" * 46)
     print("  Session summary")
     for name, rc in results:
@@ -390,12 +431,14 @@ def main():
 
     if not os.path.exists(BINARY):
         die(f"binary not found: {BINARY}\n  build it first:  cmake --build {os.path.join(REPO,'build')} -j4")
-    for p in (video, gt_path):
-        if not os.path.exists(p):
-            die(f"missing: {p}  (record + mux the session first)")
+    if not os.path.exists(video):
+        die(f"missing: {video}  (record + mux the session first)")
 
-    gt = json.load(open(gt_path))
-    multipage = "pages" in gt
+    realworld = not os.path.exists(gt_path)
+    if realworld and os.sep + "realworld" + os.sep not in session + os.sep:
+        die(f"missing: {gt_path}  (record + mux the session first)")
+    gt = None if realworld else json.load(open(gt_path))
+    multipage = bool(gt) and "pages" in gt
 
     # ── Run the tool ───────────────────────────────────────────────────────────
     os.makedirs(out_dir, exist_ok=True)
@@ -409,9 +452,16 @@ def main():
     report = json.load(open(work_json))
 
     # ── Score ──────────────────────────────────────────────────────────────────
-    scroll = score_scroll(report, gt)
-    ghost = None if multipage else score_ghost(gt, session, work_png)
-    if multipage:
+    if realworld:
+        checks, production = score_realworld(report, session)
+        scroll, ghost, total_error = None, None, 0
+        passed = checks["pass"]
+    else:
+        scroll = score_scroll(report, gt)
+    ghost = None if (realworld or multipage) else score_ghost(gt, session, work_png)
+    if realworld:
+        pass
+    elif multipage:
         checks, total_error, seg_pass, fixed_na = score_multipage(report, gt)
         passed = seg_pass and scroll["pass"]
     else:
@@ -441,7 +491,7 @@ def main():
         "timestamp": now.isoformat(timespec="seconds"),
         "git": gi,
         "session": os.path.relpath(session, REPO),
-        "type": "multipage" if multipage else "single",
+        "type": "realworld" if realworld else ("multipage" if multipage else "single"),
         "video": os.path.relpath(video, REPO),
         "outputs": outputs,
         "report": os.path.relpath(report_path, REPO),
@@ -449,7 +499,10 @@ def main():
         "scroll": scroll,
         "pass": passed,
     }
-    if multipage:
+    if realworld:
+        entry["realworld"] = checks
+        entry["production"] = production
+    elif multipage:
         entry["checks"] = checks
     else:
         entry["metrics"] = metrics
@@ -471,7 +524,9 @@ def main():
     # ── Print ──────────────────────────────────────────────────────────────────
     print(f"\nStitch benchmark — {entry['session']} ({entry['type']})   "
           f"[git {gi['commit'] or '?'}{'*' if gi['dirty'] else ''}]")
-    if multipage:
+    if realworld:
+        print_realworld(checks, production, report)
+    elif multipage:
         print_multipage(checks, total_error, seg_pass, fixed_na, scroll)
     else:
         print_single(metrics, total_error, stitch_pass, scroll)
