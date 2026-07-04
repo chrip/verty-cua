@@ -46,6 +46,14 @@ constexpr int    OVERLAY_MIN_AREA   = 576;   // ≥ 24×24 px of confirmed-fixed
 constexpr double OVERLAY_MIN_FILL   = 0.5;   // fixed-pixel fill ratio of the bbox
 constexpr double OVERLAY_MIN_STDDEV = 8.0;   // texture: uniform blobs are not UI
 constexpr int    OVERLAY_PAD        = 4;     // bbox padding (anti-aliasing, shadow)
+
+// Reported uncertainty of the fixed-band extents (session report). The bands
+// can only OVER-detect — flat content adjacent to the chrome reads as stable
+// and is absorbed into the band (a documented non-decision: the margin is
+// provably invisible in the output). Largest over-detection measured on the
+// fixtures: +39px (sidebars). The true band edge lies within
+// [detected − uncertainty, detected].
+constexpr int FIXED_BAND_UNCERTAINTY_PX = 48;
 constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-change window
 
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────

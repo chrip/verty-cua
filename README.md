@@ -7,15 +7,17 @@ page scrolled in each frame and which parts of the screen are fixed chrome
 tall image with the fixed elements stamped in place.
 
 > ### Status: work in progress (proof of concept)
-> **Milestone 1 is done** — a clean three-pass pipeline that reconstructs a page
-> from a scroll session, plus a reproducible browser-based benchmark. This is a
-> prototype, not a polished tool:
-> - it targets **edge-anchored fixed chrome** (header / footer / left+right sidebars);
-> - it assumes **one page per video**;
-> - it's tuned and measured on lab recordings (see the benchmark below).
+> **Milestones 1–6 are done** (see `ROADMAP.md`): multi-page sessions with
+> page-change detection, REVISIT recognition (a returning page merges into its
+> existing stitch at the recovered scroll offset), scroll events with
+> timestamps, anti-ghosting for animated regions and floating fixed overlays,
+> and a machine-readable session report (`-r`, schema v1). All measured by a
+> reproducible browser-based benchmark (`test_data/`, four recorded sessions,
+> one command scores everything).
 >
-> **Next milestone:** detect page changes *within* a session (e.g. a navigation
-> click loads a new page) and emit one stitched screenshot per page.
+> Still a prototype: fixed-band edges carry a declared uncertainty (bands only
+> over-detect, harmlessly), and everything is tuned on lab recordings —
+> **next: real-world screencasts (M7)**.
 
 ## How it works
 
@@ -90,7 +92,7 @@ node record_session.mjs
 python3 frames_to_mp4.py
 
 # 3. reconstruct + score against the ground truth
-python3 test_stitch_session.py
+python3 test_stitch_session.py        # or: --all (score every recorded session)
 ```
 
 Step 3 prints a per-metric stitch table with a headline **`totalError`** in

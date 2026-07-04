@@ -170,8 +170,9 @@ see whether things got better.
 ```bash
 cd test_data
 python3 test_stitch_session.py                 # scores session_page1, logs a run
-python3 test_stitch_session.py session_page2   # a different session
-python3 test_stitch_session.py --strict        # exit non-zero if any metric off-tolerance
+python3 test_stitch_session.py session_hostile # a different session
+python3 test_stitch_session.py --all           # every recorded session + summary
+python3 test_stitch_session.py --strict        # exit non-zero if off-tolerance
 ```
 
 Scored metrics (pixels): `width`, `height` (reconstructed doc size vs. viewport

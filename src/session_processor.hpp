@@ -28,6 +28,7 @@ public:
         cv::Mat image;
         long    docHeight = 0;
         std::vector<FixedRect>   fixedRects;
+        std::vector<cv::Rect>    overlays;                // interior fixed elements
         std::vector<ScrollEvent> scrollEvents;            // global frames / timestamps
         std::vector<PageStitcher::VisitTrace> visits;     // all visits of this page
     };

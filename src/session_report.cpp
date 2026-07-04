@@ -41,6 +41,7 @@ bool SessionReport::write(const std::string& path,
     const double fps = session.fps();
 
     out << "{\n";
+    out << "  \"schema\": 1,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -77,6 +78,14 @@ bool SessionReport::write(const std::string& path,
             out << (k ? ", " : "")
                 << "{\"kind\": \"" << kind_name(p.fixedRects[k].kind) << "\", "
                 << "\"x\": " << r.x << ", \"y\": " << r.y << ", "
+                << "\"w\": " << r.width << ", \"h\": " << r.height
+                << ", \"uncertaintyPx\": " << FIXED_BAND_UNCERTAINTY_PX << "}";
+        }
+        out << "], \"overlays\": [";
+        for (size_t k = 0; k < p.overlays.size(); ++k) {
+            const cv::Rect& r = p.overlays[k];
+            out << (k ? ", " : "")
+                << "{\"x\": " << r.x << ", \"y\": " << r.y << ", "
                 << "\"w\": " << r.width << ", \"h\": " << r.height << "}";
         }
         out << "]}" << (i + 1 < pages.size() ? "," : "") << "\n";

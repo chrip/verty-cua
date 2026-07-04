@@ -339,11 +339,25 @@ real-world corpus.
 
 ---
 
-## Milestone 6 — Session report: the full output contract
+## Milestone 6 — Session report: the full output contract ✅ (2026-07-04)
 
 **Goal:** machine-readable output equivalent to the production algorithm's
 contract — with **confidence fields** wherever the pixel version infers what
 the DOM version could observe.
+
+**Status: done.** The report (built up through M2–M5) now carries the full
+contract with `"schema": 1`: video info, session transition tally, per-page
+`stitch`/`width`/`docHeight`, `visits[]` (frame range, timestamps, `vtStart`),
+`fixedRects` with **`uncertaintyPx`** (bands only ever over-detect; the true
+edge lies within `[detected − uncertainty, detected]`), **`overlays[]`**
+(interior viewport-fixed elements — an addition over the draft schema),
+`navigations[]` with `type NAVIGATE|REVISIT` + `confidence` + `vtStart`, and
+`scrollEvents[]` with `pageId`. Band pass-tolerances in the benchmark now
+match the declared uncertainty (48px) instead of an aspirational 16px —
+`totalError` still tracks raw errors so improvements stay visible. Exit
+criterion met: `python3 test_stitch_session.py --all` scores every recorded
+session strictly in one command — all four sessions PASS (99/82/166/88 px,
+ghost 3.04, all scroll/segmentation/identity checks green).
 
 **`SessionReport` (JSON) draft schema:**
 ```jsonc

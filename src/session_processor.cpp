@@ -114,6 +114,7 @@ bool SessionProcessor::run()
         page.image        = rec.canvas;
         page.docHeight    = rec.stitcher->doc_height();
         page.fixedRects   = rec.stitcher->fixed_rects();
+        page.overlays     = rec.stitcher->overlays();
         page.scrollEvents = rec.stitcher->scroll_events();
         page.visits       = rec.stitcher->visits();
         pages_.push_back(std::move(page));
