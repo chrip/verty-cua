@@ -64,6 +64,8 @@ public:
     [[nodiscard]] const std::vector<ScrollEvent>& scroll_events() const { return scroll_events_; }
     // Interior viewport-fixed elements (floating buttons etc.), viewport coords.
     [[nodiscard]] const std::vector<cv::Rect>& overlays() const { return overlays_; }
+    // Confirmed persistent-noise mask (fixed video ads), viewport coords.
+    [[nodiscard]] const cv::Mat& noise_mask() const { return noise_mask_; }
     [[nodiscard]] long doc_height() const { return max_vt_ + frame_h_; }
 
 private:
@@ -75,13 +77,15 @@ private:
     int         page_id_;
 
     TransitionClassifier classifier_;
-    FixedAccumulator     accumulator_;   // chrome evidence, shared by all visits
+    FixedAccumulator     accumulator_;           // chrome evidence, all visits
+    DynamicAccumulator   noise_accumulator_;     // persistent-noise evidence
     std::vector<VisitTrace> visits_;
     long max_vt_ = 0;                    // deepest viewport top over all visits
     long min_vt_ = -1;                   // shallowest (-1 = none yet)
     std::vector<ScrollEvent> scroll_events_;
 
     cv::Mat fixed_mask_;       // frame_h × frame_w, CV_8UC1 (0/255)
+    cv::Mat noise_mask_;       // confirmed persistent noise (video ads)
     cv::Mat first_frame_;      // frame at the shallowest vt — source for header/sidebars
     cv::Mat last_frame_;       // frame at the deepest vt    — source for the footer
 

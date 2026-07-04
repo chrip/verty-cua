@@ -69,8 +69,13 @@ private:
     std::vector<NavEvent>   navigations_;
 
     // Session pass: classification of the transition into every frame
-    // (index 0 is a placeholder).
-    [[nodiscard]] std::vector<Transition> classify_transitions();
+    // (index 0 is a placeholder). seed_noise pre-loads the persistent-noise
+    // mask so a fixed video ad is masked from frame one — see run() for the
+    // two-pass reason. On return, noise_mask_ holds the matured mask.
+    [[nodiscard]] std::vector<Transition> classify_transitions(
+        const cv::Mat& seed_noise = cv::Mat());
+
+    cv::Mat noise_mask_;   // matured persistent-noise mask (last classify pass)
 
     // The visit's first stable frame, grayscale (for page identification).
     [[nodiscard]] cv::Mat read_frame_gray(long index) const;

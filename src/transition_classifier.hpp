@@ -49,13 +49,18 @@ public:
     explicit TransitionClassifier(Sensitivity sensitivity = Sensitivity::Normal)
         : sensitivity_(sensitivity) {}
 
-    // fixed_mask (optional, CV_8UC1, 255 = fixed chrome): excluded from scroll
-    // voting and from the changed-area measurements. Empty ⇒ whole frame
-    // (first pass / one-pass use). Animated content needs no mask: the
-    // explained-fraction veto is median-based and tolerates a bounded animated
-    // region by construction.
+    // fixed_mask   (optional, 255 = fixed chrome): excluded from scroll voting
+    //              and from the page-change spread.
+    // dynamic_mask (optional, 255 = confirmed persistent noise, e.g. a fixed
+    //              video ad): excluded from the spread AND from the veto's
+    //              changed-pixel evidence — a playing ad would otherwise dirty
+    //              every band it spans and veto genuine scrolls. It is NOT
+    //              used for detector sampling (the M5/M7 lessons).
+    // Bounded scrolling animation needs no mask: the median-banded veto
+    // tolerates it by construction.
     Transition classify(const cv::Mat& prev_gray, const cv::Mat& curr_gray,
-                        const cv::Mat& fixed_mask = cv::Mat());
+                        const cv::Mat& fixed_mask = cv::Mat(),
+                        const cv::Mat& dynamic_mask = cv::Mat());
 
 private:
     Sensitivity    sensitivity_;

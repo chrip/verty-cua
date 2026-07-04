@@ -83,11 +83,32 @@ constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-
 // blank loading screen, not a page — it produces no stitch and no navigation.
 constexpr double BLANK_VISIT_STDDEV = 6.0;
 
+// ── Persistent dynamic noise (fixed-position video ads, tickers) ─────────────
+// A pixel that changes during MANY non-scroll transitions is persistent
+// viewport-anchored noise. The confirm threshold is deliberately HIGH: a
+// scrolling animated element only accumulates for the length of one reading
+// pause at a given viewport position (≤ ~18 frames on the fixtures) before it
+// moves on — the M5 lesson that killed the first dynamic-mask attempt — while
+// a fixed video ad accumulates for the whole session. Confirmed-noise pixels
+// are excluded from the page-change spread and from the scroll veto's
+// evidence; they are NEVER used for detector sampling exclusion.
+constexpr int DYNAMIC_CONFIRM_FRAMES = 25;
+// Ignore the noise mask entirely if it claims more than this fraction of the
+// frame (safety against runaway accumulation).
+constexpr double DYNAMIC_MASK_MAX_FRACTION = 0.4;
+
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────
 constexpr int    IDENT_SAMPLES = 120;           // blocks sampled per candidate match
 constexpr double IDENT_MIN_STDDEV = 4.0;        // skip near-uniform blocks (match anywhere)
-constexpr double REVISIT_MIN_CONFIDENCE = 0.5;  // vote fraction to accept a REVISIT
+constexpr double REVISIT_MIN_CONFIDENCE = 0.5;  // matched-block fraction to accept a REVISIT
 constexpr int    IDENT_VT_SLACK = 2;            // vote bin slack (px) around the peak
+// The block vote proposes the offset with the loose SAD_THRESHOLD; the region
+// VERIFICATION then counts matches with a tighter bar. Measured (revisit_noscroll,
+// 2026-07-04): a true revisit renders identical pixels — 100% of interior blocks
+// match at MAD<9 (compression floor) — while two DIFFERENT pages sharing the same
+// chrome collide at only ~15% at MAD<9 but ~41% at the loose 18. The gap is what
+// separates "same page, content changed" from "different page, same template".
+constexpr double IDENT_MATCH_MAD = 9.0;
 
 // One page visit: a contiguous, stable frame range showing a single page.
 // Frames between visits (navigation transitions) belong to no visit.

@@ -59,12 +59,25 @@ bool TransitionClassifier::scroll_explains(const cv::Mat& prev_gray,
 
 Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
                                           const cv::Mat& curr_gray,
-                                          const cv::Mat& fixed_mask)
+                                          const cv::Mat& fixed_mask,
+                                          const cv::Mat& dynamic_mask)
 {
     cv::Mat diff;
     cv::absdiff(prev_gray, curr_gray, diff);
     if (cv::mean(diff)[0] < IDENTICAL_FRAME_MAD)
         return {TransitionType::Identical, 0};
+
+    // If everything that changed lies inside confirmed persistent noise (a
+    // playing fixed video ad), the page itself did not move: Identical. This
+    // also lets the segmenter's debounce window close during ad churn.
+    if (!dynamic_mask.empty()) {
+        cv::Mat masked = diff.clone();
+        masked.setTo(0, dynamic_mask);
+        const double area = static_cast<double>(diff.total())
+                            - cv::countNonZero(dynamic_mask);
+        if (area > 0 && cv::sum(masked)[0] / area < IDENTICAL_FRAME_MAD)
+            return {TransitionType::Identical, 0};
+    }
 
     // The vote histogram proposes a dy; the explained-fraction veto decides.
     // The proposal is used even when the histogram's own validity gates fail:
@@ -79,7 +92,7 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // masked veto accepted an alias and hid the page change entirely.
     ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
     for (int dy : s.proposals)
-        if (scroll_explains(prev_gray, curr_gray, dy, cv::Mat()))
+        if (scroll_explains(prev_gray, curr_gray, dy, dynamic_mask))
             return {TransitionType::Scroll, dy};
 
     // No scroll explains the change. A PAGE CHANGE is a change SPREAD over the
@@ -91,14 +104,18 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     cv::Mat smooth, changed;
     cv::blur(diff, smooth, cv::Size(3, 3));
     cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
-    if (!fixed_mask.empty())
-        changed.setTo(0, fixed_mask);
+    cv::Mat ignore;   // chrome + persistent noise carry no page-change signal
+    if      (fixed_mask.empty())   ignore = dynamic_mask;
+    else if (dynamic_mask.empty()) ignore = fixed_mask;
+    else                           cv::bitwise_or(fixed_mask, dynamic_mask, ignore);
+    if (!ignore.empty())
+        changed.setTo(0, ignore);
 
     int changed_bands = 0, bands = 0;
     for (int y = 0; y + RESIDUAL_BAND_H <= changed.rows; y += RESIDUAL_BAND_H) {
         const cv::Rect band(0, y, changed.cols, RESIDUAL_BAND_H);
         double area = static_cast<double>(band.area());
-        if (!fixed_mask.empty()) area -= cv::countNonZero(fixed_mask(band));
+        if (!ignore.empty()) area -= cv::countNonZero(ignore(band));
         if (area < 1000) continue;                 // band is (almost) all chrome
         ++bands;
         if (cv::countNonZero(changed(band)) / area > BAND_CHANGED_MIN_FRAC)

@@ -8,7 +8,8 @@ PageStitcher::PageStitcher(std::string video_path, int frame_w, int frame_h,
     : video_path_(std::move(video_path)),
       frame_w_(frame_w), frame_h_(frame_h), fps_(fps),
       verbose_(verbose), page_id_(page_id),
-      accumulator_(frame_w, frame_h)
+      accumulator_(frame_w, frame_h),
+      noise_accumulator_(frame_w, frame_h)
 {
     fixed_mask_ = cv::Mat::zeros(frame_h_, frame_w_, CV_8UC1);
 }
@@ -48,15 +49,19 @@ void PageStitcher::analyze_visit(const PageVisit& visit, long vt_start)
     while (video.next(f) && f.index <= visit.lastFrame) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
-        Transition tr = classifier_.classify(prev_gray, curr_gray);  // no mask yet
+        Transition tr = classifier_.classify(prev_gray, curr_gray,
+                                             cv::Mat(), noise_accumulator_.mask());
         if (tr.type == TransitionType::Scroll) {
             accumulator_.accumulate(prev_gray, curr_gray);
             vt = std::max(0L, vt + tr.dy);
+        } else {
+            noise_accumulator_.accumulate(prev_gray, curr_gray);
         }
         prev_gray = curr_gray.clone();
     }
 
     fixed_mask_ = accumulator_.mask();
+    noise_mask_ = noise_accumulator_.mask();
     extract_rects();
 
     if (verbose_)
@@ -99,7 +104,8 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start)
     while (video.next(f) && f.index <= visit.lastFrame) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
-        Transition tr = classifier_.classify(prev_gray, curr_gray, fixed_mask_);
+        Transition tr = classifier_.classify(prev_gray, curr_gray,
+                                             fixed_mask_, noise_mask_);
         if (tr.type == TransitionType::Scroll)
             vt = std::max(0L, vt + tr.dy);
 
@@ -246,6 +252,34 @@ void PageStitcher::extract_overlays()
         b.height = std::min(H - b.y, b.height + 2 * OVERLAY_PAD);
         candidates.push_back(b);
     }
+    // Persistent-noise region (a fixed video ad): confirmed by its own
+    // accumulation — no two-frame verification (its content CHANGES; that is
+    // the point). The ad's changing content splits into several disjoint
+    // textured blobs across the session; they are ONE fixed element, so union
+    // them into a single bounding box — otherwise each blob would be stamped
+    // separately and the ad would appear several times down the page.
+    if (!noise_mask_.empty()) {
+        cv::Mat nm = noise_mask_.clone();
+        if (header_h_ > 0) nm(cv::Rect(0, 0, W, header_h_)).setTo(0);
+        if (footer_h_ > 0) nm(cv::Rect(0, H - footer_h_, W, footer_h_)).setTo(0);
+        if (left_w_  > 0)  nm(cv::Rect(0, 0, left_w_, H)).setTo(0);
+        if (right_w_ > 0)  nm(cv::Rect(W - right_w_, 0, right_w_, H)).setTo(0);
+        cv::morphologyEx(nm, nm, cv::MORPH_OPEN,
+                         cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
+        if (cv::countNonZero(nm) >= OVERLAY_MIN_AREA) {
+            cv::Rect b = cv::boundingRect(nm);   // union of all noise pixels
+            b.x = std::max(0, b.x - OVERLAY_PAD);
+            b.y = std::max(0, b.y - OVERLAY_PAD);
+            b.width  = std::min(W - b.x, b.width  + 2 * OVERLAY_PAD);
+            b.height = std::min(H - b.y, b.height + 2 * OVERLAY_PAD);
+            overlays_.push_back(b);
+            if (verbose_)
+                std::cout << "[page " << page_id_ << " noise-overlay] "
+                          << b.width << "×" << b.height << " at viewport ("
+                          << b.x << "," << b.y << ")\n";
+        }
+    }
+
     if (candidates.empty()) return;
 
     // Verification: a genuine viewport-fixed overlay is IDENTICAL in two

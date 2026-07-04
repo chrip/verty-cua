@@ -36,7 +36,8 @@ PageRegistry::assign(const PageVisit& visit, const cv::Mat& first_frame_gray)
     for (size_t i = 0; sensitivity_ == Sensitivity::Normal && i < records_.size(); ++i) {
         Identification id = identifier_.match(first_frame_gray,
                                               records_[i].canvas_gray,
-                                              interior_of(records_[i]));
+                                              interior_of(records_[i]),
+                                              records_[i].stitcher->noise_mask());
         if (verbose_)
             std::cout << "[registry] visit [" << visit.firstFrame << ".."
                       << visit.lastFrame << "] vs page " << i

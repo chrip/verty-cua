@@ -4,7 +4,8 @@
 
 Identification PageIdentifier::match(const cv::Mat& frame_gray,
                                      const cv::Mat& canvas_gray,
-                                     const cv::Rect& interior) const
+                                     const cv::Rect& interior,
+                                     const cv::Mat& noise_mask) const
 {
     Identification id;
     if (interior.width < BLOCK_SIZE || interior.height < BLOCK_SIZE) return id;
@@ -22,7 +23,10 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
     for (int a = 0; a < max_attempts && usable < IDENT_SAMPLES; ++a) {
         const int px = dist_x(rng);
         const int py = dist_y(rng);
-        const cv::Mat block = frame_gray(cv::Rect(px, py, BLOCK_SIZE, BLOCK_SIZE));
+        const cv::Rect r(px, py, BLOCK_SIZE, BLOCK_SIZE);
+        if (!noise_mask.empty()
+            && cv::mean(noise_mask(r))[0] / 255.0 > 0.25) continue;   // ad: no identity
+        const cv::Mat block = frame_gray(r);
 
         // Near-uniform blocks match anywhere — no page-identity signal.
         cv::Scalar mean, stddev;
@@ -55,9 +59,40 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
         }
         if (score > best_score) { best_score = score; best_vt = vt; }
     }
+    if (best_score < 5) return id;   // no coherent offset at all
 
-    id.vt0        = std::max(0L, best_vt);
-    id.confidence = static_cast<double>(best_score) / usable;
+    // Region verification at vt0: walk a grid over the frame↔canvas
+    // INTERSECTION and count textured, non-noise blocks that match (min MAD
+    // over ±IDENT_VT_SLACK shifts). Robust against partial content change:
+    // popped-in images fail individually without sinking the whole match.
+    const long vt0 = std::max(0L, best_vt);
+    int checked = 0, matched = 0;
+    for (int py = interior.y; py + BLOCK_SIZE <= interior.y + interior.height; py += 48) {
+        const long cy = vt0 + py;
+        if (cy < 0 || cy + BLOCK_SIZE > canvas_gray.rows) continue;
+        for (int px = interior.x; px + BLOCK_SIZE <= interior.x + interior.width; px += 48) {
+            const cv::Rect r(px, py, BLOCK_SIZE, BLOCK_SIZE);
+            if (!noise_mask.empty()
+                && cv::mean(noise_mask(r))[0] / 255.0 > 0.25) continue;
+            const cv::Mat block = frame_gray(r);
+            cv::Scalar mean, stddev;
+            cv::meanStdDev(block, mean, stddev);
+            if (stddev[0] < IDENT_MIN_STDDEV) continue;
+            ++checked;
+            float best_mad = std::numeric_limits<float>::max();
+            for (long s = -IDENT_VT_SLACK; s <= IDENT_VT_SLACK; ++s) {
+                const long y = cy + s;
+                if (y < 0 || y + BLOCK_SIZE > canvas_gray.rows) continue;
+                best_mad = std::min(best_mad, patch_mad(
+                    canvas_gray(cv::Rect(px, static_cast<int>(y), BLOCK_SIZE, BLOCK_SIZE)), block));
+            }
+            if (best_mad < IDENT_MATCH_MAD) ++matched;   // near-identical, not just similar
+        }
+    }
+    if (checked < 12) return id;   // intersection too small to judge
+
+    id.vt0        = vt0;
+    id.confidence = static_cast<double>(matched) / checked;
     id.matched    = id.confidence >= REVISIT_MIN_CONFIDENCE;
     return id;
 }

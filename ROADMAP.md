@@ -415,6 +415,40 @@ all 14 sessions):
   Chrome and whitespace already drop out of the unshifted-changed denominator
   by construction.
 
+### Fixed-position video ads (dynamic noise) — 2026-07-04
+
+rw1_newsportal carries a mega fixed-position VIDEO AD on the right. Its churn
+was previously classified as a PAGE_CHANGE storm — 44 false page changes that
+fractured the single article into fragments and buried the scroll. Now:
+
+- **DynamicAccumulator**: a pixel that changes across many NON-scroll
+  transitions is persistent viewport-anchored noise. The confirm threshold is
+  deliberately HIGH (`DYNAMIC_CONFIRM_FRAMES = 25`) — a *scrolling* animation
+  only dwells at one viewport position for a single reading pause (the M5
+  lesson that killed the first dynamic-mask attempt), while a fixed ad
+  accumulates for the whole session.
+- The mask is used ONLY where noise-exclusion is sound: the page-change
+  spread, the scroll veto's changed-pixel evidence, and page identification.
+  It is NEVER used for detector sampling (M5/M7 lesson).
+- **Two-pass classification**: pass 1 matures the mask (an ad's churn reads as
+  PAGE_CHANGE until the mask confirms it — chicken-and-egg); pass 2 re-runs
+  seeded with the mask, so the ad collapses to Identical from frame one. On
+  rw1 this cut the storm from 44 page-changes to 5.
+- **Region-verified page identity**: block votes propose the offset, then a
+  grid over the frame↔canvas intersection verifies it. Confidence = fraction
+  of near-identical blocks (`IDENT_MATCH_MAD = 9`, tighter than the loose
+  voting threshold). Measured: a true revisit matches 100% of interior blocks
+  at MAD<9; two DIFFERENT pages sharing one chrome template collide at only
+  ~15%. This is robust to partial content change (a revisit with some images
+  swapped) yet does not confuse sibling pages.
+
+Result: the ad is recognized as noise (265764px), masked, and the scroll is
+recovered THROUGH the storm — the core of the request. rw1 still splits into
+2 pages (not 1) and reaches 4076 of 4737px: the news portal AUTO-REFRESHED its
+articles mid-session, so the post-storm view shares almost no content with the
+pre-storm view — recognizing "same page after a full content refresh" has no
+pixel signal to lock onto and is left as open backlog.
+
 Corpus scores after this pass: rw3 is a page-for-page match with the DOM
 production output (6524/956/4327 vs 6520/960/4320); rw2 within 4px; rw5
 per-page heights within 8px. **Remaining backlog:** rw4's very deep page is

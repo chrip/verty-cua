@@ -28,3 +28,27 @@ private:
     cv::Mat counter_;   // frame_h × frame_w, CV_32SC1
 };
 
+// Evidence of PERSISTENT viewport-anchored dynamic noise (fixed-position video
+// ads, stock tickers): a pixel's counter grows every NON-scroll transition it
+// changes in. No reset — persistence is the signal; the high confirm
+// threshold (DYNAMIC_CONFIRM_FRAMES) keeps scrolling animations out (they
+// leave a viewport position after one reading pause).
+class DynamicAccumulator {
+public:
+    DynamicAccumulator(int frame_w, int frame_h);
+
+    // Feed one NON-scroll transition (Identical/Unstable).
+    void accumulate(const cv::Mat& prev_gray, const cv::Mat& curr_gray);
+
+    // Pre-mature the counter to confirmed wherever `mask` is set, so a second
+    // classification pass starts already knowing where the persistent noise is.
+    void seed(const cv::Mat& mask);
+
+    // Confirmed-noise mask (CV_8UC1, frame-sized), or an EMPTY Mat when the
+    // mask would claim more than DYNAMIC_MASK_MAX_FRACTION of the frame.
+    [[nodiscard]] cv::Mat mask() const;
+
+private:
+    cv::Mat counter_;   // frame_h × frame_w, CV_32SC1
+};
+

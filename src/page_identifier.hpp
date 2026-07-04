@@ -26,7 +26,15 @@ public:
     // frame_gray: the visit's first stable frame (grayscale).
     // canvas_gray: the candidate page's current stitched canvas (grayscale).
     // interior: the candidate page's scroll area within the viewport.
+    // noise_mask: confirmed persistent noise (video ads) — excluded from both
+    //             voting and verification; ads carry no page identity.
+    //
+    // Two stages: block votes propose the offset vt0; a grid over the
+    // frame↔canvas INTERSECTION then verifies it. Confidence is the fraction
+    // of textured, non-noise grid blocks matching at vt0 — robust against
+    // partial content change (images that popped in after the first visit).
     [[nodiscard]] Identification match(const cv::Mat& frame_gray,
                                        const cv::Mat& canvas_gray,
-                                       const cv::Rect& interior) const;
+                                       const cv::Rect& interior,
+                                       const cv::Mat& noise_mask = cv::Mat()) const;
 };
