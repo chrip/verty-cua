@@ -71,9 +71,15 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // animated content steals votes and can break the dominance gate on a
     // perfectly genuine scroll — the veto is the reliable arbiter for both
     // false positives AND weak-vote true positives.
+    // The veto is deliberately MASKLESS: chrome and whitespace drop out of the
+    // unshifted-changed denominator on their own. Passing a pixel mask would
+    // exclude stable whitespace and CONCENTRATE the evidence on periodic
+    // regions (stripes, tiled images), letting an alias dy that explains only
+    // those regions pass — measured on the revisit back-navigation, where a
+    // masked veto accepted an alias and hid the page change entirely.
     ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
     for (int dy : s.proposals)
-        if (scroll_explains(prev_gray, curr_gray, dy, fixed_mask))
+        if (scroll_explains(prev_gray, curr_gray, dy, cv::Mat()))
             return {TransitionType::Scroll, dy};
 
     // No scroll explains the change. A PAGE CHANGE is a change SPREAD over the

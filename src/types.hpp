@@ -3,7 +3,14 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 constexpr int BLOCK_SIZE = 16;          // pixels per block side
-constexpr int MAX_SCROLL = 400;         // max pixels scrolled per frame
+// Max per-frame scroll searched. Real recordings contain Page-Down/anchor
+// jumps and fast flings far beyond smooth-scroll steps. 880 keeps a thin
+// overlap band on a ~900px viewport: the few blocks that land there vote the
+// true dy, the top-K proposals surface it, and the explain-veto (measured on
+// the overlap only) confirms it. Jumps at/beyond the viewport height share no
+// pixels between frames — genuinely unrecoverable by local matching; they
+// read as page changes and the registry may re-localize them later.
+constexpr int MAX_SCROLL = 880;
 constexpr int SCROLL_STEP = 1;          // pixel step for scroll search
 constexpr int SCROLL_SAMPLES = 120;     // blocks sampled for scroll histogram
 constexpr int SAD_THRESHOLD = 18;       // max mean absolute diff to call a match
@@ -72,6 +79,9 @@ constexpr int    OVERLAY_PAD        = 4;     // bbox padding (anti-aliasing, sha
 // [detected − uncertainty, detected].
 constexpr int FIXED_BAND_UNCERTAINTY_PX = 48;
 constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-change window
+// A visit whose first frame is nearly uniform (gray stddev below this) is a
+// blank loading screen, not a page — it produces no stitch and no navigation.
+constexpr double BLANK_VISIT_STDDEV = 6.0;
 
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────
 constexpr int    IDENT_SAMPLES = 120;           // blocks sampled per candidate match

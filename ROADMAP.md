@@ -395,7 +395,33 @@ fixed rects, stitch scores) — one command scores the *entire contract*.
 
 ---
 
-## Milestone 7 — Real-world hardening
+## Milestone 7 — Real-world hardening ◐ (first pass 2026-07-04)
+
+**First pass done, driven by the production corpus** (each change measured on
+all 14 sessions):
+- **Blank-visit filter**: white loading screens between navigations are not
+  pages — dropped (rw2 became a single page matching production; rw1's white
+  intro gone).
+- **MAX_SCROLL 400 → 880** + `session_jumps` fixture: instant ~400px leaps
+  (Page-Down style) are detected exactly (dyErrorSum 0). Measured envelope:
+  jumps are reliable to ≈half the content window; the hard physical limit is
+  `viewport − header − footer` (no shared visible pixels beyond), and
+  page-wide periodic content erodes the practical limit well below it.
+- **Texture gate in scroll voting**: near-uniform blocks all resolve to the
+  scan's first minimum, forming a junk bin that outvotes real peaks.
+- **The explains-veto is now always MASKLESS**: passing the pixel fixed-mask
+  concentrated the changed-pixel evidence on periodic regions and let an
+  alias dy hide a page change (measured on the revisit back-navigation).
+  Chrome and whitespace already drop out of the unshifted-changed denominator
+  by construction.
+
+Corpus scores after this pass: rw3 is a page-for-page match with the DOM
+production output (6524/956/4327 vs 6520/960/4320); rw2 within 4px; rw5
+per-page heights within 8px. **Remaining backlog:** rw4's very deep page is
+still truncated (5542 vs 11624 — fling steps beyond the overlap limit; needs
+registry-level intra-page re-localization), rw1's article stitch reaches 86%
+of the reference, and rw5 splits fewer steps than production's high-
+sensitivity setting (soft comparison).
 
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.

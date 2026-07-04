@@ -75,6 +75,15 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
         int px = gx * BLOCK_SIZE;
         int py = gy * BLOCK_SIZE;
         if (!block_is_scrollable(px, py)) continue;
+
+        // Near-uniform blocks match at MANY offsets and all resolve to the
+        // scan's first minimum — a junk bin that can outvote the real dy.
+        // They carry no scroll information; skip them entirely.
+        {
+            cv::Scalar mean, stddev;
+            cv::meanStdDev(extract_block(curr_gray, px, py), mean, stddev);
+            if (stddev[0] < IDENT_MIN_STDDEV) continue;
+        }
         ++collected;
 
         auto [dy, mad] = best_dy(prev_gray, curr_gray, px, py);

@@ -45,7 +45,7 @@ let PLAN_NAME = 'single';
 const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
 const PLANS = ['single', 'multipage', 'revisit', 'hostile',
-               'noscroll', 'revisit_noscroll', 'cookie'];
+               'noscroll', 'revisit_noscroll', 'cookie', 'jumps'];
 if (!PLANS.includes(PLAN_NAME)) {
   console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
@@ -54,7 +54,7 @@ const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
                        revisit: 'session_revisit', hostile: 'session_hostile',
                        noscroll: 'session_noscroll',
                        revisit_noscroll: 'session_revisit_noscroll',
-                       cookie: 'session_cookie' };
+                       cookie: 'session_cookie', jumps: 'session_jumps' };
 const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
                        cookie:  'scroll_page_cookie.html' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
@@ -99,6 +99,24 @@ const MULTIPAGE_PLAN = [
 // viewport-sized screenshot — no scroll events, no fixed elements claimed
 // (nothing scrolled, so nothing is knowable about the chrome).
 const NOSCROLL_PLAN = [{ pause: 90 }];
+
+// Large-jump plan: instant scrollTo leaps (Page-Down / anchor-link style) —
+// each jump lands in ONE frame. Exercises scroll offsets close to the
+// viewport height, far beyond smooth-flick step sizes.
+// Jumps are recoverable only while enough content is visible in BOTH frames:
+// the hard limit is dy < viewport − header − footer (≈772px here), and
+// periodic content (image placeholders, text lines) erodes reliability as the
+// overlap shrinks. ~400px leaps (≈half the content window) are the measured
+// reliable envelope — see the M7 notes in ROADMAP.md.
+const JUMPS_PLAN = [
+  { pause: 10 },
+  { jump: 0.17 }, { pause: 10 },   // ≈400px leaps
+  { jump: 0.34 }, { pause: 10 },
+  { jump: 0.51 }, { pause: 10 },
+  { jump: 0.68 }, { pause: 10 },
+  { jump: 0.85 }, { pause: 10 },
+  { jump: 1.00 }, { pause: 12 },
+];
 
 // Multi-page WITHOUT scrolling: page-change and REVISIT detection must work
 // independently of both scrolling and fixed elements.
@@ -260,6 +278,15 @@ async function runSingle(plan) {
     if (step.pause) {
       for (let i = 0; i < step.pause; i++) await capture({ scrollY: curY });
       resolvedPlan.push({ pause: step.pause, atPx: curY });
+      continue;
+    }
+    if (step.jump !== undefined) {
+      const targetY = Math.min(maxScrollY, Math.round(step.jump * maxScrollY));
+      const actual = await evaluate(`window.scrollTo(0, ${targetY}); Math.round(window.scrollY)`);
+      await sleep(SETTLE_MS);
+      await capture({ scrollY: actual });
+      resolvedPlan.push({ jump: step.jump, toPx: targetY });
+      curY = targetY;
       continue;
     }
     const targetY = Math.min(maxScrollY, Math.max(0, Math.round(step.to * maxScrollY)));
@@ -482,6 +509,7 @@ try {
   else if (PLAN_NAME === 'revisit_noscroll') await runSession(REVISIT_NOSCROLL_PLAN);
   else if (PLAN_NAME === 'cookie')           await runSession(COOKIE_PLAN);
   else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
+  else if (PLAN_NAME === 'jumps')            await runSingle(JUMPS_PLAN);
   else                                       await runSingle(SINGLE_PLAN);   // single + hostile
 } catch (e) {
   console.error('record failed:', e.message);

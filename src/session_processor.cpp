@@ -94,20 +94,33 @@ bool SessionProcessor::run()
     }
 
     // Assign every visit to a page (REVISIT merges, NAVIGATE starts a page).
+    // Content-free visits — blank loading screens between navigations on real
+    // recordings — are dropped: a page has content, a white frame does not.
     PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_,
                           sensitivity_);
     navigations_.clear();
-    int prev_page = 0;
-    for (size_t i = 0; i < seg.visits.size(); ++i) {
-        const PageVisit& visit = seg.visits[i];
+    int  prev_page = 0;
+    bool have_page = false;
+    for (const PageVisit& visit : seg.visits) {
         const cv::Mat first_gray = read_frame_gray(visit.firstFrame);
         if (first_gray.empty()) continue;
 
+        cv::Scalar mean, stddev;
+        cv::meanStdDev(first_gray, mean, stddev);
+        if (stddev[0] < BLANK_VISIT_STDDEV) {
+            if (verbose_)
+                std::cout << "[session] visit [" << visit.firstFrame << ".."
+                          << visit.lastFrame << "] dropped: blank (stddev "
+                          << stddev[0] << ")\n";
+            continue;
+        }
+
         const PageRegistry::Assignment a = registry.assign(visit, first_gray);
-        if (i > 0)
+        if (have_page)
             navigations_.push_back({visit.firstFrame, prev_page, a.pageId,
                                     a.navType, a.confidence, a.vtStart});
         prev_page = a.pageId;
+        have_page = true;
     }
 
     // Collect the distinct pages.
