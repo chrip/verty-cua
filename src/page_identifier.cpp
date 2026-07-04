@@ -41,7 +41,11 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
             const float mad = patch_mad(canvas_gray(cv::Rect(px, cy, BLOCK_SIZE, BLOCK_SIZE)), block);
             if (mad < best_mad) { best_mad = mad; best_y = cy; }
         }
-        if (best_y >= 0 && best_mad < SAD_THRESHOLD)
+        // Vote only on NEAR-IDENTICAL matches (not merely similar): a weak
+        // match lands at whatever offset minimises MAD, scattering votes and
+        // masking the true peak's concentration. The tight bar keeps the vote
+        // histogram clean so concentration is meaningful.
+        if (best_y >= 0 && best_mad < IDENT_MATCH_MAD)
             votes[best_y - py]++;
     }
 
@@ -50,8 +54,9 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
     // Peak with slack: a candidate offset's score counts all votes within
     // ±IDENT_VT_SLACK px (stitch quantization / compression jitter).
     long best_vt = 0;
-    int  best_score = 0;
-    for (const auto& [vt, _] : votes) {
+    int  best_score = 0, total_votes = 0;
+    for (const auto& [vt, n] : votes) {
+        total_votes += n;
         int score = 0;
         for (long s = vt - IDENT_VT_SLACK; s <= vt + IDENT_VT_SLACK; ++s) {
             auto it = votes.find(s);
@@ -60,6 +65,16 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
         if (score > best_score) { best_score = score; best_vt = vt; }
     }
     if (best_score < 5) return id;   // no coherent offset at all
+
+    // Concentration = share of ALL matching votes that agree on this single
+    // offset. A true revisit — even one whose content partly changed (a news
+    // page that reloaded some articles) — has its surviving blocks clustered
+    // at ONE offset, so concentration is high. Two DIFFERENT pages sharing a
+    // chrome template collide at MANY offsets (the template repeats), so their
+    // votes scatter and concentration stays low even when a best-offset overlap
+    // fraction looks deceptively high. Measured 2026-07-05: rw1 reload 0.6-0.7
+    // vs the revisit_noscroll sibling-page collision 0.34.
+    id.concentration = static_cast<double>(best_score) / total_votes;
 
     // Region verification at vt0: walk a grid over the frame↔canvas
     // INTERSECTION and count textured, non-noise blocks that match (min MAD
@@ -91,8 +106,15 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
     }
     if (checked < 12) return id;   // intersection too small to judge
 
-    id.vt0        = vt0;
-    id.confidence = static_cast<double>(matched) / checked;
-    id.matched    = id.confidence >= REVISIT_MIN_CONFIDENCE;
+    id.vt0           = vt0;
+    id.confidence    = static_cast<double>(matched) / checked;
+    id.matched_blocks = matched;
+    // A REVISIT needs BOTH a strong overlap where the pages intersect AND a
+    // concentrated offset (or, for a heavily-reloaded page, a large absolute
+    // cluster of near-identical blocks at one offset even if the surviving
+    // fraction dips below the overlap bar).
+    id.matched = (id.confidence >= REVISIT_MIN_CONFIDENCE
+                  || id.matched_blocks >= REVISIT_MIN_MATCH_BLOCKS)
+                 && id.concentration >= REVISIT_MIN_CONCENTRATION;
     return id;
 }

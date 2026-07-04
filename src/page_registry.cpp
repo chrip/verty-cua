@@ -42,6 +42,8 @@ PageRegistry::assign(const PageVisit& visit, const cv::Mat& first_frame_gray)
             std::cout << "[registry] visit [" << visit.firstFrame << ".."
                       << visit.lastFrame << "] vs page " << i
                       << ": confidence " << id.confidence
+                      << " conc " << id.concentration
+                      << " blocks " << id.matched_blocks
                       << (id.matched ? " (match, vt0=" + std::to_string(id.vt0) + ")" : "")
                       << "\n";
         if (id.matched && id.confidence > best.confidence) {

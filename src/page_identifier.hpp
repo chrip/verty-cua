@@ -4,9 +4,11 @@
 
 // Result of matching a frame against a known page's canvas.
 struct Identification {
-    bool   matched    = false;
-    long   vt0        = 0;     // document offset of the frame's viewport top
-    double confidence = 0.0;   // fraction of usable sample blocks voting for vt0
+    bool   matched       = false;
+    long   vt0           = 0;   // document offset of the frame's viewport top
+    double confidence    = 0.0; // near-identical block fraction over the overlap
+    double concentration = 0.0; // share of matching votes agreeing on vt0
+    int    matched_blocks = 0;  // absolute near-identical blocks at vt0
 };
 
 // Recognizes whether a frame shows a page the session has already seen

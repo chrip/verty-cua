@@ -101,6 +101,7 @@ private:
 
     void extract_rects();
     void extract_overlays();
+    void add_overlay(const cv::Rect& o);   // merge into the page-wide overlay list
     void append_scroll_events(const VisitTrace& trace);
     void stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const;
 };

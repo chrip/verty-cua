@@ -183,9 +183,24 @@ void PageStitcher::extract_rects()
 // (floating buttons, cookie banners). Filters separate genuine overlays from
 // stable whitespace, the historical false positive: overlays are COMPACT
 // (fixed-pixel fill of the bbox) and TEXTURED (whitespace is uniform).
+// Merge one verified overlay into the page-wide list. Overlays are collected
+// across ALL visits of the page (not just the last): a revisit merges several
+// visits, and a floating element verified in one visit must stay masked for
+// every visit's interior copy — otherwise it is baked into the scroll content
+// at each position it was seen. Rects covering the same element (>50% of the
+// smaller overlapping the other) are unioned to their bounding box.
+void PageStitcher::add_overlay(const cv::Rect& o)
+{
+    for (cv::Rect& e : overlays_) {
+        const cv::Rect inter = e & o;
+        const int smaller = std::min(e.area(), o.area());
+        if (smaller > 0 && inter.area() > smaller / 2) { e |= o; return; }
+    }
+    overlays_.push_back(o);
+}
+
 void PageStitcher::extract_overlays()
 {
-    overlays_.clear();
     if (last_frame_.empty() && first_frame_.empty()) return;
 
     cv::Mat rem = fixed_mask_.clone();
@@ -272,7 +287,7 @@ void PageStitcher::extract_overlays()
             b.y = std::max(0, b.y - OVERLAY_PAD);
             b.width  = std::min(W - b.x, b.width  + 2 * OVERLAY_PAD);
             b.height = std::min(H - b.y, b.height + 2 * OVERLAY_PAD);
-            overlays_.push_back(b);
+            add_overlay(b);
             if (verbose_)
                 std::cout << "[page " << page_id_ << " noise-overlay] "
                           << b.width << "×" << b.height << " at viewport ("
@@ -310,7 +325,7 @@ void PageStitcher::extract_overlays()
     for (const cv::Rect& b : candidates) {
         const double mad = cv::norm(a(b), b2(b), cv::NORM_L1) / (3.0 * b.area());
         if (mad >= SAD_THRESHOLD) continue;   // content moved: not an overlay
-        overlays_.push_back(b);
+        add_overlay(b);
         if (verbose_)
             std::cout << "[page " << page_id_ << " overlay] "
                       << b.width << "×" << b.height << " at viewport ("
@@ -434,6 +449,10 @@ cv::Mat PageStitcher::reconstruct()
         }
         return false;
     };
+    // Per-pixel written map over the interior columns: 255 where a real content
+    // pixel has been placed. Overlay columns start unwritten (masked out below),
+    // which drives the blank-fill pass.
+    cv::Mat written = cv::Mat::zeros(static_cast<int>(doc_h), interior.width, CV_8UC1);
     std::vector<uint8_t> row_written(static_cast<size_t>(doc_h), 0);
     for (const VisitTrace& trace : visits_) {
         VideoSource video = open_at(trace.visit);
@@ -458,10 +477,56 @@ cv::Mat PageStitcher::reconstruct()
                     && row_mad(incoming.row(row), dst, mask) > ROW_CONFLICT_MAD
                     && !explainable(incoming.row(row), doc_row, mask))
                     continue;   // dynamic content: keep the first observation
-                if (mask.empty()) incoming.row(row).copyTo(dst);
-                else              incoming.row(row).copyTo(dst, mask);
+                cv::Mat wrow = written.row(doc_row);
+                if (mask.empty()) { incoming.row(row).copyTo(dst);       wrow.setTo(255); }
+                else              { incoming.row(row).copyTo(dst, mask); wrow.setTo(255, mask); }
                 row_written[doc_row] = 1;
             }
+        }
+    }
+
+    // Blank-fill pass: interior pixels still unwritten sat behind a
+    // viewport-fixed overlay in EVERY frame that stitched their document row
+    // (the conflict-freeze also refuses to fill a blank column, seeing the
+    // white gap as disagreement). Recover them from any frame that shows the
+    // same document row at a viewport position clear of the overlays — a blank
+    // pixel has nothing to conflict with, so this pass takes the first sighting.
+    // Only needed when overlays created masked columns.
+    if (!overlays_.empty()) {
+        const long before = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written);
+        for (const VisitTrace& trace : visits_) {
+            VideoSource video = open_at(trace.visit);
+            if (!video.ok()) continue;
+
+            VideoSource::Frame f;
+            while (video.next(f) && f.index <= trace.visit.lastFrame) {
+                const long local = f.index - trace.visit.firstFrame;
+                long vt = local < static_cast<long>(trace.vt_by_frame.size())
+                              ? trace.vt_by_frame[local]
+                              : (trace.vt_by_frame.empty() ? 0 : trace.vt_by_frame.back());
+                vt = std::max(0L, vt);
+                const int dst_y = static_cast<int>(vt) + interior.y;
+                if (dst_y + interior.height > static_cast<int>(doc_h)) continue;
+
+                const cv::Mat incoming = f.bgr(interior);
+                for (int row = 0; row < interior.height; ++row) {
+                    const int doc_row = dst_y + row;
+                    cv::Mat wrow = written.row(doc_row);
+                    cv::Mat fillable;
+                    cv::bitwise_not(wrow, fillable);          // 255 where still blank
+                    const cv::Mat& mask = row_mask[row];      // overlay cols in THIS frame
+                    if (!mask.empty()) cv::bitwise_and(fillable, mask, fillable);
+                    if (cv::countNonZero(fillable) == 0) continue;
+                    cv::Mat dst = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
+                    incoming.row(row).copyTo(dst, fillable);
+                    cv::bitwise_or(wrow, fillable, wrow);
+                }
+            }
+        }
+        if (verbose_) {
+            const long after = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written);
+            std::cout << "[page " << page_id_ << " blank-fill] unwritten "
+                      << before << " -> " << after << " interior px\n";
         }
     }
 

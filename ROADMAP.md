@@ -449,6 +449,43 @@ articles mid-session, so the post-storm view shares almost no content with the
 pre-storm view — recognizing "same page after a full content refresh" has no
 pixel signal to lock onto and is left as open backlog.
 
+### Reload-REVISIT recognition + blank-fill behind overlays — 2026-07-05
+
+Two corpus-driven improvements (measured on all 14 sessions):
+
+- **Reload REVISIT (rw1).** A news portal that AUTO-REFRESHES its articles
+  mid-session was splitting into two pages: the post-reload scroll shared too
+  little top-of-page content with the pre-reload canvas for the first-frame
+  identifier to recognise it. The fix keys on **vote concentration** — the
+  share of near-identical block votes that agree on ONE document offset. A
+  reloaded page keeps its surviving blocks (headlines, images that did not
+  change) clustered at a single offset (measured 0.5-0.7), while two DIFFERENT
+  pages sharing one chrome template collide at many offsets and scatter (~0.34,
+  even when a best-offset overlap fraction looks deceptively ~0.5). A REVISIT
+  is now accepted when the overlap fraction clears the bar OR a large absolute
+  cluster of near-identical blocks survives (`REVISIT_MIN_MATCH_BLOCKS`),
+  provided the concentration clears `REVISIT_MIN_CONCENTRATION`. Voting itself
+  was tightened to the near-identical bar (`IDENT_MATCH_MAD`) so the histogram
+  stays clean. Result: rw1 is now a SINGLE page, 4735px vs the DOM system's
+  4744 — a page-for-page match. revisit_noscroll (two sibling pages sharing a
+  template) still correctly stays two pages.
+
+- **Blank-fill behind overlays.** Viewport-fixed floating elements (a scroll-
+  to-top button, a "Haben Sie Fragen?" chat widget) are masked out of the
+  scroll interior and stamped once — but the content behind them was left
+  blank wherever it sat under the element in every frame that wrote its
+  document row (the conflict-freeze also refuses to fill a blank column,
+  reading the gap as disagreement). A new post-pass recovers those pixels from
+  any frame that shows the same document row at a viewport position clear of
+  the overlays. And overlays are now collected across ALL visits of a page
+  (not just the last) — a revisit merges several visits, and an element
+  verified in one must stay masked for every visit's interior copy, else it is
+  baked into the scroll content at each position it was seen. On the hostile
+  fixture the ghost score improved (madMean 3.84 -> 2.75, badBlocks
+  1.13% -> 0.00%). Known residual: a chat widget whose icon sits a few px
+  outside its detected text-pill box is not fully covered and still repeats on
+  rw3 (overlay-detection coverage, not the fill).
+
 Corpus scores after this pass: rw3 is a page-for-page match with the DOM
 production output (6524/956/4327 vs 6520/960/4320); rw2 within 4px; rw5
 per-page heights within 8px. **Remaining backlog:** rw4's very deep page is

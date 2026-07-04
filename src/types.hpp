@@ -109,6 +109,15 @@ constexpr int    IDENT_VT_SLACK = 2;            // vote bin slack (px) around th
 // chrome collide at only ~15% at MAD<9 but ~41% at the loose 18. The gap is what
 // separates "same page, content changed" from "different page, same template".
 constexpr double IDENT_MATCH_MAD = 9.0;
+// A revisit is accepted when the overlap fraction clears REVISIT_MIN_CONFIDENCE
+// OR a large absolute cluster of near-identical blocks survives at one offset
+// (a heavily-reloaded page whose surviving fraction dips below the bar) — but
+// in BOTH cases the vote concentration must clear REVISIT_MIN_CONCENTRATION,
+// which is what separates a same-page reload from a sibling page sharing one
+// chrome template. Measured on rw1 (reload, concentration 0.6-0.7) vs the
+// revisit_noscroll sibling-page collision (0.34).
+constexpr double REVISIT_MIN_CONCENTRATION = 0.5;
+constexpr int    REVISIT_MIN_MATCH_BLOCKS  = 40;
 
 // One page visit: a contiguous, stable frame range showing a single page.
 // Frames between visits (navigation transitions) belong to no visit.
