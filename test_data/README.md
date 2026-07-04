@@ -106,6 +106,22 @@ benchmark scores a **ghost metric** against it: per-16px-block MAD, locally
 aligned per block-row (±12px — drift is not ghosting), animated bboxes
 excluded. Baseline (2026-07-04): madMean 3.84, badBlocks 1.13%.
 
+### Axis-isolating sessions (2026-07-04)
+
+```bash
+node record_session.mjs --plan noscroll               # just look, never scroll
+node record_session.mjs --plan single scroll_page_plain.html session_plain
+node record_session.mjs --plan revisit_noscroll       # 2 pages + back, no scroll
+node record_session.mjs --plan cookie                 # banner close = DOM mutation
+```
+
+`noscroll` expects a viewport-sized stitch with NO fixed elements claimed
+(unknowable without scrolling). `plain` has no chrome at all. `revisit_noscroll`
+checks navigation + REVISIT without scrolling or usable chrome. `cookie` is the
+borderline case — run the tool with `-S normal` (one stitch) or `-S high`
+(a new stitch per bigger mutation, no revisit merging) to see both valid
+outcomes.
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit

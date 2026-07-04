@@ -69,6 +69,10 @@ This produces `./build/verty`.
 
 - `-o` — the stitched full-page PNG (page N of a multi-page session gets a
   `_pageN` suffix).
+- `-S` — sensitivity `normal|high` (default normal): `normal` starts a new
+  page only on a real navigation; `high` starts a new stitched screenshot on
+  every bigger DOM mutation (e.g. a closing cookie banner) and never merges
+  revisits.
 - `-r` — optional **session report** (JSON): pages (stitch file, geometry,
   visit frame range, fixed-element rectangles), navigation events, scroll
   events with timestamps (`{t, frame, pageId, dy, vt}`), and a tally of

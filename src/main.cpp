@@ -17,6 +17,7 @@ struct Args {
     std::string output  = "output.png";
     std::string report;                  // session-report JSON path ("" = off)
     bool        verbose = false;
+    Sensitivity sensitivity = Sensitivity::Normal;
 };
 
 static void print_usage(const char* prog) {
@@ -26,6 +27,10 @@ static void print_usage(const char* prog) {
               << "      suffix (e.g. output_page0.png, output_page1.png).\n"
               << "  -r  write session report (JSON): pages, navigations, scroll\n"
               << "      events + timestamps, fixed-element rects, transition tally\n"
+              << "  -S  sensitivity: normal|high (default normal). normal starts a\n"
+              << "      new page only on a real navigation; high starts a new\n"
+              << "      stitched screenshot on every bigger mutation and never\n"
+              << "      merges revisits\n"
               << "  -v  verbose logging\n";
 }
 
@@ -38,6 +43,12 @@ static Args parse_args(int argc, char* argv[]) {
         if      (arg == "-v")                     a.verbose = true;
         else if (arg == "-o" && i + 1 < argc)     a.output  = argv[++i];
         else if (arg == "-r" && i + 1 < argc)     a.report  = argv[++i];
+        else if (arg == "-S" && i + 1 < argc) {
+            const std::string v = argv[++i];
+            if      (v == "normal") a.sensitivity = Sensitivity::Normal;
+            else if (v == "high")   a.sensitivity = Sensitivity::High;
+            else { std::cerr << "invalid -S value: " << v << " (use normal|high)\n"; std::exit(1); }
+        }
         else { std::cerr << "Unknown argument: " << arg << "\n"; print_usage(argv[0]); std::exit(1); }
     }
     return a;
@@ -58,7 +69,7 @@ int main(int argc, char* argv[])
     Args args = parse_args(argc, argv);
     auto t_start = std::chrono::steady_clock::now();
 
-    SessionProcessor session(args.input, args.verbose);
+    SessionProcessor session(args.input, args.verbose, args.sensitivity);
     if (!session.ok()) {
         std::cerr << "Cannot open: " << args.input << "\n";
         return 1;

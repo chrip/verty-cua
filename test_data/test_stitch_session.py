@@ -234,18 +234,29 @@ def score_single(report, gt):
 
     p0 = pages[0] if pages else {"width": 0, "docHeight": 0, "fixedRects": []}
     bands = fixed_from_rects(p0["fixedRects"])
+
+    # The stitch can only contain what the session SAW: expected height is the
+    # deepest scroll + viewport (== pageHeight when the session reached the
+    # bottom). A session that never scrolled expects a viewport-sized stitch.
+    seen_max = max((f["scrollY"] for f in gt["frames"]), default=0)
     expected = {
-        "width":  gt["viewport"]["width"],  "height": gt["pageHeight"],
+        "width":  gt["viewport"]["width"],
+        "height": seen_max + gt["viewport"]["height"],
         "header": gt["fixed"]["headerHeight"], "footer": gt["fixed"]["footerHeight"],
         "left":   gt["fixed"]["leftWidth"],    "right":  gt["fixed"]["rightWidth"],
     }
     measured = {"width": p0["width"], "height": p0["docHeight"], **bands}
 
+    # Without scrolling, fixed elements are unknowable — the tool must not
+    # CLAIM any (expected bands become 0, exact).
+    no_scroll = seen_max < 150
     metrics = {}
     for k in expected:
-        err = measured[k] - expected[k]
-        metrics[k] = {"measured": measured[k], "expected": expected[k],
-                      "error": err, "within_tol": abs(err) <= TOLERANCE[k]}
+        exp = 0 if (no_scroll and k in ("header", "footer", "left", "right")) else expected[k]
+        tol = 0 if (no_scroll and k in ("header", "footer", "left", "right")) else TOLERANCE[k]
+        err = measured[k] - exp
+        metrics[k] = {"measured": measured[k], "expected": exp,
+                      "error": err, "within_tol": abs(err) <= tol}
     total_error = sum(abs(metrics[k]["error"]) for k in metrics)
     stitch_pass = all(metrics[k]["within_tol"] for k in metrics) and seg_ok
     return metrics, total_error, stitch_pass, seg_ok

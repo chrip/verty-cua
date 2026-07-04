@@ -46,6 +46,9 @@ struct TransitionCounts {
 // classifies single transitions only.
 class TransitionClassifier {
 public:
+    explicit TransitionClassifier(Sensitivity sensitivity = Sensitivity::Normal)
+        : sensitivity_(sensitivity) {}
+
     // fixed_mask (optional, CV_8UC1, 255 = fixed chrome): excluded from scroll
     // voting and from the changed-area measurements. Empty ⇒ whole frame
     // (first pass / one-pass use). Animated content needs no mask: the
@@ -55,6 +58,7 @@ public:
                         const cv::Mat& fixed_mask = cv::Mat());
 
 private:
+    Sensitivity    sensitivity_;
     ScrollDetector scroll_;
 
     // True iff shifting prev by dy leaves at most SCROLL_RESIDUAL_MAX of the

@@ -72,23 +72,38 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // perfectly genuine scroll — the veto is the reliable arbiter for both
     // false positives AND weak-vote true positives.
     ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
-    if (s.dy != 0 && scroll_explains(prev_gray, curr_gray, s.dy, fixed_mask))
-        return {TransitionType::Scroll, s.dy};
+    for (int dy : s.proposals)
+        if (scroll_explains(prev_gray, curr_gray, dy, fixed_mask))
+            return {TransitionType::Scroll, dy};
 
-    // No scroll explains the change — measure how much of the scrollable area
-    // actually changed. 3×3 blur suppresses single-pixel compression noise.
+    // No scroll explains the change. A PAGE CHANGE is a change SPREAD over the
+    // viewport: count the horizontal bands that changed significantly. Spread
+    // needs no chrome mask — shared chrome merely leaves its bands unchanged —
+    // so it also works on sessions that never scrolled (where the online
+    // chrome estimate cannot learn). A concentrated change (cookie banner,
+    // animation, popup) touches few bands and stays Unstable under Normal.
     cv::Mat smooth, changed;
     cv::blur(diff, smooth, cv::Size(3, 3));
     cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+    if (!fixed_mask.empty())
+        changed.setTo(0, fixed_mask);
 
-    double area = static_cast<double>(diff.total());
-    if (!fixed_mask.empty()) {
-        changed.setTo(0, fixed_mask);               // fixed chrome doesn't count
-        area -= cv::countNonZero(fixed_mask);
+    int changed_bands = 0, bands = 0;
+    for (int y = 0; y + RESIDUAL_BAND_H <= changed.rows; y += RESIDUAL_BAND_H) {
+        const cv::Rect band(0, y, changed.cols, RESIDUAL_BAND_H);
+        double area = static_cast<double>(band.area());
+        if (!fixed_mask.empty()) area -= cv::countNonZero(fixed_mask(band));
+        if (area < 1000) continue;                 // band is (almost) all chrome
+        ++bands;
+        if (cv::countNonZero(changed(band)) / area > BAND_CHANGED_MIN_FRAC)
+            ++changed_bands;
     }
-    if (area <= 0.0) return {TransitionType::Unstable, 0};
+    if (bands == 0) return {TransitionType::Unstable, 0};
 
-    double fraction = cv::countNonZero(changed) / area;
-    return {fraction > PAGE_CHANGE_MIN_FRACTION ? TransitionType::PageChange
-                                                : TransitionType::Unstable, 0};
+    const double threshold = sensitivity_ == Sensitivity::High
+                                 ? PAGE_CHANGE_HIGH_SPREAD
+                                 : PAGE_CHANGE_MIN_SPREAD;
+    const double spread = static_cast<double>(changed_bands) / bands;
+    return {spread > threshold ? TransitionType::PageChange
+                               : TransitionType::Unstable, 0};
 }

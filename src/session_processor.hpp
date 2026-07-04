@@ -16,7 +16,8 @@
 //      stitch at the recovered entry offset; otherwise it starts a new page.
 class SessionProcessor {
 public:
-    explicit SessionProcessor(std::string video_path, bool verbose = false);
+    explicit SessionProcessor(std::string video_path, bool verbose = false,
+                              Sensitivity sensitivity = Sensitivity::Normal);
 
     [[nodiscard]] bool ok() const { return ok_; }
 
@@ -61,6 +62,7 @@ private:
     double      fps_         = 0.0;
     long        frame_count_ = 0;
 
+    Sensitivity             sensitivity_;
     TransitionClassifier    classifier_;
     TransitionCounts        counts_;       // session-level (segmentation pass)
     std::vector<PageResult> pages_;

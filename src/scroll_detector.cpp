@@ -84,7 +84,7 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
         }
     }
 
-    if (hist.empty()) return {0, 0, false};
+    if (hist.empty()) return {};
 
     // Find the peak and runner-up vote counts
     int best_votes   = 0, second_votes = 0;
@@ -103,6 +103,15 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
     res.dy    = best_dy_val;
     res.votes = best_votes;
 
+    // Top-K vote peaks as ordered proposals for the classifier's veto.
+    std::vector<std::pair<int, int>> bins(hist.begin(), hist.end());
+    std::sort(bins.begin(), bins.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    for (const auto& [dy, votes] : bins) {
+        if (static_cast<int>(res.proposals.size()) >= SCROLL_PROPOSALS) break;
+        if (dy != 0) res.proposals.push_back(dy);
+    }
+
     // Two-part validity gate:
     //   1. Absolute floor: at least 10% of samples agree on this dy.
     //   2. Dominance: best must beat runner-up by ≥ 50%.
@@ -113,11 +122,12 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
     res.valid = (res.votes >= min_votes)
              && (res.votes >= second_floor * 3 / 2);   // ≥ 1.5× runner-up
 
-    // If dominant bin is 0 (or ±1 rounding noise), treat as no scroll
-    if (std::abs(res.dy) <= 1 && res.valid) {
-        res.dy    = 0;
+    // A dominant bin of ±1 px is ambiguous — rounding noise as often as a real
+    // 1px scroll — so it never validates on its own. The dy PROPOSAL is kept:
+    // the TransitionClassifier's explained-fraction veto decides (a genuine
+    // 1px scroll explains the frame perfectly; noise does not).
+    if (std::abs(res.dy) <= 1)
         res.valid = false;
-    }
 
     // If the best dy lands exactly on the search boundary it means the actual
     // scroll exceeded MAX_SCROLL and was silently clamped — the value is not

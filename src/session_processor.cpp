@@ -1,8 +1,10 @@
 #include "session_processor.hpp"
 #include <iostream>
 
-SessionProcessor::SessionProcessor(std::string video_path, bool verbose)
-    : video_path_(std::move(video_path)), verbose_(verbose)
+SessionProcessor::SessionProcessor(std::string video_path, bool verbose,
+                                   Sensitivity sensitivity)
+    : video_path_(std::move(video_path)), verbose_(verbose),
+      sensitivity_(sensitivity), classifier_(sensitivity)
 {
     VideoSource probe(video_path_);
     if (!probe.ok()) return;
@@ -92,7 +94,8 @@ bool SessionProcessor::run()
     }
 
     // Assign every visit to a page (REVISIT merges, NAVIGATE starts a page).
-    PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_);
+    PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_,
+                          sensitivity_);
     navigations_.clear();
     int prev_page = 0;
     for (size_t i = 0; i < seg.visits.size(); ++i) {

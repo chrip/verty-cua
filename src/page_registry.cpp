@@ -2,9 +2,10 @@
 #include <iostream>
 
 PageRegistry::PageRegistry(std::string video_path, int frame_w, int frame_h,
-                           double fps, bool verbose)
+                           double fps, bool verbose, Sensitivity sensitivity)
     : video_path_(std::move(video_path)),
-      frame_w_(frame_w), frame_h_(frame_h), fps_(fps), verbose_(verbose)
+      frame_w_(frame_w), frame_h_(frame_h), fps_(fps), verbose_(verbose),
+      sensitivity_(sensitivity)
 {
 }
 
@@ -28,9 +29,11 @@ PageRegistry::assign(const PageVisit& visit, const cv::Mat& first_frame_gray)
     Assignment a;
 
     // Identify against every known page; the most confident match wins.
+    // Under HIGH sensitivity every visit is its own document version — no
+    // identification, no merging (the production semantics of the parameter).
     int  best_page = -1;
     Identification best;
-    for (size_t i = 0; i < records_.size(); ++i) {
+    for (size_t i = 0; sensitivity_ == Sensitivity::Normal && i < records_.size(); ++i) {
         Identification id = identifier_.match(first_frame_gray,
                                               records_[i].canvas_gray,
                                               interior_of(records_[i]));

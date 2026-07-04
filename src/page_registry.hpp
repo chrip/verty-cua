@@ -18,7 +18,7 @@
 class PageRegistry {
 public:
     PageRegistry(std::string video_path, int frame_w, int frame_h, double fps,
-                 bool verbose);
+                 bool verbose, Sensitivity sensitivity = Sensitivity::Normal);
 
     struct Assignment {
         int         pageId     = 0;
@@ -46,6 +46,7 @@ private:
     int         frame_h_;
     double      fps_;
     bool        verbose_;
+    Sensitivity sensitivity_;
 
     PageIdentifier          identifier_;
     std::vector<PageRecord> records_;

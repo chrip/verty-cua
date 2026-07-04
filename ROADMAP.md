@@ -406,6 +406,38 @@ results log; fixture benchmarks unregressed.
 
 ---
 
+## Coverage cases + sensitivity (2026-07-04)
+
+Four axis-isolating test sessions (user-specified) plus the production
+`sensitivity` parameter:
+- `session_noscroll` — no scroll at all → viewport-sized stitch, zero scroll
+  events, **no fixed elements claimed** (unknowable without scrolling; the
+  benchmark enforces "must not claim").
+- `session_plain` — scrolling with **no fixed elements** (full-width plain
+  document): scroll detection independent of chrome.
+- `session_revisit_noscroll` — two pages + history back, **never scrolling**:
+  page-change + REVISIT independent of chrome and scrolling.
+- `session_cookie` — the borderline case: a cookie banner closes via DOM
+  mutation on the same page. Under `-S normal`: one stitch (a slim frozen
+  banner remnant — one of the two valid outcomes). Under `-S high`: two
+  stitches (with banner / without).
+
+These cases forced two classifier improvements (each measured):
+- **PAGE_CHANGE = band SPREAD, not area fraction**: the fraction of 32px bands
+  changed ≥5%. Mask-free (works with zero scrolling, where the online chrome
+  estimate cannot learn) and cleanly separated: navigations 0.75–0.86 vs
+  banner 0.14 vs animation/hover 0.00. Normal threshold 0.5, High 0.10.
+- **Top-K scroll proposals**: periodic content (full-width striped
+  placeholders) can put an alias above the true dy in the vote histogram; the
+  veto now walks the top-3 proposals and takes the first that explains. The
+  ±1px noise gate also became a proposal (veto-decided), recovering the six
+  long-missed |dy|=1 events — session_page1 dyErrorSum 6 → **0**.
+
+`-S normal|high` (CLI): Normal = new page only on real navigation; High = new
+stitched screenshot per bigger mutation, and visits are never merged (each is
+its own document version — the production semantics). All **eight** sessions
+PASS `--all` under Normal.
+
 ## Sequencing rationale
 
 M2 (typed transitions) is the foundation everything else consumes and makes

@@ -44,13 +44,19 @@ const argv = process.argv.slice(2);
 let PLAN_NAME = 'single';
 const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
-if (!['single', 'multipage', 'revisit', 'hostile'].includes(PLAN_NAME)) {
-  console.error(`unknown plan: ${PLAN_NAME} (use single|multipage|revisit|hostile)`);
+const PLANS = ['single', 'multipage', 'revisit', 'hostile',
+               'noscroll', 'revisit_noscroll', 'cookie'];
+if (!PLANS.includes(PLAN_NAME)) {
+  console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
 }
 const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
-                       revisit: 'session_revisit', hostile: 'session_hostile' };
-const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html' };
+                       revisit: 'session_revisit', hostile: 'session_hostile',
+                       noscroll: 'session_noscroll',
+                       revisit_noscroll: 'session_revisit_noscroll',
+                       cookie: 'session_cookie' };
+const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
+                       cookie:  'scroll_page_cookie.html' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
 const OUT_DIR   = resolve(argv[1] || join(HERE, DEFAULT_OUT[PLAN_NAME]));
 const FRAMES_DIR = join(OUT_DIR, 'frames');
@@ -87,6 +93,30 @@ const MULTIPAGE_PLAN = [
   { click: '#scroll-content a.next-article' },                    // → page 2
   { park:  { x: 30, y: 870 } },                                   // mouse off the links
   { pause: 75 },                                                  // stay ~2.5 s
+];
+
+// No-scroll plan: just look at the page. The result must be a single
+// viewport-sized screenshot — no scroll events, no fixed elements claimed
+// (nothing scrolled, so nothing is knowable about the chrome).
+const NOSCROLL_PLAN = [{ pause: 90 }];
+
+// Multi-page WITHOUT scrolling: page-change and REVISIT detection must work
+// independently of both scrolling and fixed elements.
+const REVISIT_NOSCROLL_PLAN = [
+  { pause: 20 },
+  { click: '#scroll-content a.next-article' },   // → page 2
+  { pause: 20 },
+  { back: true },                                 // history back → page 1
+  { pause: 20 },
+];
+
+// Cookie-banner plan (borderline case): a large DOM mutation on the SAME page.
+const COOKIE_PLAN = [
+  { pause: 35 },                        // banner visible
+  { clickLocal: '#cookie-accept' },     // DOM mutation — banner disappears
+  { pause: 30 },
+  { to: 0.35 }, { pause: 12 },          // then scroll a bit
+  { to: 0.75 }, { pause: 12 },
 ];
 
 // Revisit plan (Milestone-4 fixture): the session returns to a page it has
@@ -215,7 +245,7 @@ async function elementCenter(selector) {
 }
 
 // ── Plan: single (schema unchanged — the stitch benchmark consumes it) ───────
-async function runSingle() {
+async function runSingle(plan) {
   const gt = await loadPage('file://' + PAGE_FILE);
   const maxScrollY = gt.page.maxScrollY;
   console.log(`page: ${PAGE_FILE}`);
@@ -226,7 +256,7 @@ async function runSingle() {
   let curY = 0;
   await evaluate('window.scrollTo(0, 0)'); await sleep(SETTLE_MS);
 
-  for (const step of SINGLE_PLAN) {
+  for (const step of plan) {
     if (step.pause) {
       for (let i = 0; i < step.pause; i++) await capture({ scrollY: curY });
       resolvedPlan.push({ pause: step.pause, atPx: curY });
@@ -381,6 +411,17 @@ async function runSession(plan) {
       await moveMouse(step.park.x, step.park.y);
       continue;
     }
+    if (step.clickLocal) {
+      const c = await elementCenter(step.clickLocal);
+      await moveMouse(c.x, c.y);
+      const triggerFrame = frameNo;
+      await call('Input.dispatchMouseEvent', { type: 'mousePressed',  x: c.x, y: c.y, button: 'left', clickCount: 1 });
+      await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', clickCount: 1 });
+      events.push({ type: 'mutation', selector: step.clickLocal, frame: triggerFrame });
+      console.log(`mutation ${step.clickLocal} @frame ${triggerFrame} (same page)`);
+      await sleep(SETTLE_MS * 3);   // let the mutation render
+      continue;
+    }
     if (step.click) {
       const c = await elementCenter(step.click);
       await moveMouse(c.x, c.y);
@@ -436,9 +477,12 @@ try {
   rmSync(FRAMES_DIR, { recursive: true, force: true });
   mkdirSync(FRAMES_DIR, { recursive: true });
 
-  if      (PLAN_NAME === 'multipage') await runSession(MULTIPAGE_PLAN);
-  else if (PLAN_NAME === 'revisit')   await runSession(REVISIT_PLAN);
-  else                                await runSingle();   // single + hostile
+  if      (PLAN_NAME === 'multipage')        await runSession(MULTIPAGE_PLAN);
+  else if (PLAN_NAME === 'revisit')          await runSession(REVISIT_PLAN);
+  else if (PLAN_NAME === 'revisit_noscroll') await runSession(REVISIT_NOSCROLL_PLAN);
+  else if (PLAN_NAME === 'cookie')           await runSession(COOKIE_PLAN);
+  else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
+  else                                       await runSingle(SINGLE_PLAN);   // single + hostile
 } catch (e) {
   console.error('record failed:', e.message);
   process.exitCode = 1;

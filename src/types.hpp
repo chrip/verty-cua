@@ -9,7 +9,24 @@ constexpr int SCROLL_SAMPLES = 120;     // blocks sampled for scroll histogram
 constexpr int SAD_THRESHOLD = 18;       // max mean absolute diff to call a match
 constexpr int FIXED_CONFIRM_FRAMES = 6; // stable scroll events before a pixel is FIXED
 constexpr double IDENTICAL_FRAME_MAD = 2.0;      // below: duplicate frame / pause
-constexpr double PAGE_CHANGE_MIN_FRACTION = 0.4; // changed-area fraction ⇒ new page
+// A page change is a change SPREAD over the viewport: the fraction of 32px
+// horizontal bands whose changed-pixel share exceeds BAND_CHANGED_MIN_FRAC.
+// Spread needs no chrome mask (works on no-scroll sessions where the online
+// chrome estimate never learns) and separates cleanly — measured: navigations
+// 0.75–0.86, cookie-banner mutation 0.14, animation/hover 0.00.
+constexpr double PAGE_CHANGE_MIN_SPREAD = 0.5;   // Sensitivity::Normal
+constexpr double BAND_CHANGED_MIN_FRAC  = 0.05;
+
+// ── Sensitivity ───────────────────────────────────────────────────────────────
+// Mirrors the production DOM-based parameter:
+//   Normal — a page change only on a real navigation (large unexplained change).
+//   High   — a new stitched screenshot for every bigger DOM mutation (e.g. a
+//            cookie banner closing): a much lower changed-area threshold, and
+//            visits are NEVER merged (no REVISIT) — each one is its own
+//            document version. Caveat of the pixel world: heavy animation is
+//            indistinguishable from mutation and will also split.
+enum class Sensitivity { Normal, High };
+constexpr double PAGE_CHANGE_HIGH_SPREAD = 0.10;   // banner-close = 0.14 ⇒ splits
 // A detected scroll dy must also EXPLAIN the transition. After shifting the
 // previous frame by dy, the overlap is cut into horizontal bands and each
 // band's changed fraction is measured; the MEDIAN band must be nearly clean.
@@ -74,7 +91,12 @@ struct ScrollResult {
     int  dy    = 0;      // dominant scroll (pixels, positive = scrolled down)
     int  votes = 0;      // histogram bin count at dy
     bool valid = false;  // enough evidence found
+    // Top vote peaks in order (dy first). Periodic content (stripes, text
+    // lines) can put an alias above the true dy — the classifier's veto walks
+    // the proposals and takes the first one that explains the transition.
+    std::vector<int> proposals;
 };
+constexpr int SCROLL_PROPOSALS = 3;
 
 // ── Inline helpers ────────────────────────────────────────────────────────────
 

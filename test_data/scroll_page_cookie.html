@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stitching Test Page — COOKIE BANNER (DOM mutation, same page)</title>
+<style>
+  /* Same chrome as scroll_page.html plus a cookie banner fixed over the
+     bottom. Accepting it is a DOM MUTATION on the SAME page — semantically no
+     navigation, visually a large sudden change. The borderline case. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --header-h: 72px; --footer-h: 56px; --left-w: 240px; --right-w: 180px; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color: #1f2733; background: #eef1f5; line-height: 1.55; }
+
+  #site-header { position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
+    background: #1b3a5b; color: #fff; display: flex; align-items: center; gap: 20px;
+    padding: 0 24px; z-index: 40; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+  #site-header .logo { font-weight: 700; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+  #site-header .logo .mark { width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg, #34c759, #007aff); }
+  #site-header nav { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+  #site-header nav a { color: #cfe0f2; text-decoration: none; }
+
+  #site-footer { position: fixed; bottom: 0; left: 0; right: 0; height: var(--footer-h);
+    background: #14202e; color: #9fb1c4; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 24px; font-size: 13px; z-index: 40; }
+
+  #left-sidebar { position: fixed; top: var(--header-h); bottom: var(--footer-h); left: 0;
+    width: var(--left-w); background: #223146; color: #d7e1ee; padding: 18px 14px;
+    overflow: hidden; z-index: 30; }
+  #left-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #7f93ab; margin-bottom: 12px; }
+  #left-sidebar div.item { padding: 10px 12px; border-radius: 6px; margin-bottom: 4px;
+    font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  #left-sidebar div.item .ico { width: 18px; height: 18px; border-radius: 4px; background: #3f5872; }
+
+  #right-sidebar { position: fixed; top: var(--header-h); bottom: var(--footer-h); right: 0;
+    width: var(--right-w); background: #ffffff; border-left: 1px solid #d9e0e8;
+    padding: 18px 14px; overflow: hidden; z-index: 30; }
+  #right-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #8a97a6; margin-bottom: 12px; }
+  #right-sidebar .widget { background: #f3f6fa; border: 1px solid #e3e9f0; border-radius: 8px;
+    padding: 12px; margin-bottom: 12px; font-size: 13px; color: #45505f; }
+
+  #scroll-content { margin: var(--header-h) var(--right-w) var(--footer-h) var(--left-w);
+    padding: 32px 40px 60px; background: #ffffff;
+    min-height: calc(100vh - var(--header-h) - var(--footer-h)); }
+  #scroll-content h1 { font-size: 30px; margin-bottom: 6px; color: #14202e; }
+  #scroll-content h2 { font-size: 22px; margin: 28px 0 10px; color: #1b3a5b;
+    border-bottom: 2px solid #e6ecf2; padding-bottom: 6px; }
+  #scroll-content p { margin-bottom: 14px; color: #333c47; }
+  .img-placeholder { width: 100%; height: 200px; border-radius: 8px; margin: 14px 0;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    font-size: 14px; font-weight: 600; background-color: #8fa3b8;
+    background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.12) 0,
+      rgba(255,255,255,.12) 12px, transparent 12px, transparent 24px); }
+  .a { background-color: #6c8ebf; } .b { background-color: #7aa06f; }
+
+  /* The cookie banner: fixed over the bottom, above the footer. */
+  #cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; height: 120px;
+    z-index: 60; background: #2b3a4d; color: #e8eef5; display: flex;
+    align-items: center; justify-content: center; gap: 28px; padding: 0 40px;
+    box-shadow: 0 -4px 14px rgba(0,0,0,.35); font-size: 15px; }
+  #cookie-accept { padding: 12px 26px; border: 0; border-radius: 8px;
+    background: #34c759; color: #fff; font-size: 15px; font-weight: 700; }
+</style>
+</head>
+<body>
+  <header id="site-header" data-region="header">
+    <span class="logo"><span class="mark"></span> CookieDocs</span>
+    <nav><a href="#">Overview</a><a href="#">Guides</a><a href="#">Support</a></nav>
+  </header>
+  <aside id="left-sidebar" data-region="left">
+    <h2>Navigation</h2>
+    <div class="item"><span class="ico"></span> Landing</div>
+    <div class="item"><span class="ico"></span> Consent</div>
+    <div class="item"><span class="ico"></span> Mutations</div>
+    <div class="item"><span class="ico"></span> Sensitivity</div>
+  </aside>
+  <aside id="right-sidebar" data-region="right">
+    <h2>On this page</h2>
+    <div class="widget">Welcome</div>
+    <div class="widget">Details</div>
+    <div class="widget">Fine print</div>
+  </aside>
+  <main id="scroll-content" data-region="scroll">
+    <h1>Landing Page With a Cookie Banner</h1>
+    <p>A consent banner covers the bottom of the viewport. Accepting it is a
+      DOM mutation on the same page — no navigation happens, yet a large area
+      changes at once. Whether a stitcher shows or hides the banner is a
+      question of sensitivity, not correctness.</p>
+    <h2>1. Welcome</h2>
+    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+      tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+      veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+      commodo consequat. Duis aute irure dolor in reprehenderit in voluptate.</p>
+    <div class="img-placeholder a">STATIC IMAGE — 100% × 200</div>
+    <h2>2. Details</h2>
+    <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem
+      accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab
+      illo inventore veritatis et quasi architecto beatae vitae dicta sunt.</p>
+    <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut
+      fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem
+      sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor.</p>
+    <div class="img-placeholder b">STATIC IMAGE — 100% × 200</div>
+    <h2>3. Fine print</h2>
+    <p>At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis
+      praesentium voluptatum deleniti atque corrupti quos dolores et quas
+      molestias excepturi sint occaecati cupiditate non provident. This marks
+      the bottom of the document.</p>
+  </main>
+  <div id="cookie-banner">
+    <span>We use cookies to make this test fixture deliciously realistic.</span>
+    <button id="cookie-accept">Accept all</button>
+  </div>
+  <footer id="site-footer" data-region="footer">
+    <span>© 2026 CookieDocs — Test fixture</span>
+    <span>Fixed footer · always visible</span>
+  </footer>
+<script>
+function r(n) { return Math.round(n * 100) / 100; }
+function docBox(el) {
+  const b = el.getBoundingClientRect();
+  return { x: r(b.left + window.scrollX), y: r(b.top + window.scrollY),
+           width: r(b.width), height: r(b.height) };
+}
+function pageMetrics() {
+  const doc = document.documentElement;
+  return { viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+           pageWidth: Math.max(doc.scrollWidth, doc.clientWidth),
+           pageHeight: Math.max(doc.scrollHeight, doc.clientHeight),
+           maxScrollY: Math.max(doc.scrollHeight - window.innerHeight, 0),
+           devicePixelRatio: window.devicePixelRatio };
+}
+function regions() {
+  const out = {};
+  document.querySelectorAll('[data-region]').forEach(el => {
+    out[el.getAttribute('data-region')] = docBox(el);
+  });
+  return out;
+}
+document.getElementById('cookie-accept').addEventListener('click', () => {
+  document.getElementById('cookie-banner').remove();   // the DOM mutation
+});
+window.addEventListener('load', () => {
+  window.scrollTo(0, 0);
+  const reg = regions();
+  window.GROUND_TRUTH = {
+    page: pageMetrics(), regions: reg,
+    fixed: { headerHeight: reg.header.height, footerHeight: reg.footer.height,
+             leftWidth: reg.left.width, rightWidth: reg.right.width },
+  };
+  console.log('[GROUND TRUTH]', window.GROUND_TRUTH);
+});
+</script>
+</body>
+</html>
