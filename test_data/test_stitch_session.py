@@ -151,7 +151,15 @@ def score_ghost(gt, session, stitch_png):
         return None
 
     vw, vh = gt["viewport"]["width"], gt["viewport"]["height"]
-    f = gt["fixed"]
+    # Single-page ground truth carries `fixed` at the top level; the multipage
+    # schema carries it per page. Only a single-page session can be scored this
+    # way — the reference is one document.
+    f = gt.get("fixed")
+    if f is None:
+        pages = gt.get("pages") or []
+        if len(pages) != 1 or "fixed" not in pages[0]:
+            return None
+        f = pages[0]["fixed"]
     x0, x1 = int(f["leftWidth"]), vw - int(f["rightWidth"])
     y0 = int(f["headerHeight"]) + 8
     y1 = min(ref.shape[0], stitch.shape[0]) - int(f["footerHeight"]) - 8
@@ -525,12 +533,15 @@ def main():
         passed = checks["pass"]
     else:
         scroll = score_scroll(report, gt)
-    ghost = None if (realworld or multipage) else score_ghost(gt, session, work_png)
+    # A settled full-page reference makes the ghost metric meaningful for any
+    # single-document session, multipage schema or not (score_ghost declines
+    # when the ground truth describes more than one page).
+    ghost = None if realworld else score_ghost(gt, session, work_png)
     if realworld:
         pass
     elif multipage:
         checks, total_error, seg_pass, fixed_na = score_multipage(report, gt)
-        passed = seg_pass and scroll["pass"]
+        passed = seg_pass and scroll["pass"] and (ghost is None or ghost["pass"])
     else:
         allow_pc = os.path.basename(session.rstrip(os.sep)) in PAGECHANGE_EXPECTED
         metrics, total_error, stitch_pass, seg_ok = score_single(report, gt, allow_pc)

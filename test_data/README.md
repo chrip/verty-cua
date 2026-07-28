@@ -123,6 +123,15 @@ borderline case — run the tool with `-S normal` (one stitch) or `-S high`
 (a new stitch per bigger mutation, no revisit merging) to see both valid
 outcomes.
 
+Since 2026-07-28 `cookie` also captures a **settled** `fullpage.png` (taken after
+the session, banner dismissed, chrome hidden) and is scored by the ghost metric.
+That makes one specific question measurable: does the stitch show the page as it
+SETTLED, or does it freeze a transient early appearance? Under `-S normal` the
+banner is a minority appearance (35 frames of 110) and must NOT survive into the
+stitch. Baseline: madMean 2.57, madWorst 4.32, badBlocks 0.00%. The same
+criterion scores 6.14 / 194.18 / 4.56% under the old first-observation rule, so
+it genuinely discriminates.
+
 ### Intra-page re-localization (2026-07-27)
 
 ```bash

@@ -288,6 +288,33 @@ async function elementCenter(selector) {
   return c;
 }
 
+// Reference render for perceptual scoring: the browser's own full-page
+// screenshot, captured AFTER the session so it cannot disturb the frames, and
+// with the fixed chrome HIDDEN — captureBeyondViewport renders position:fixed
+// elements once at their viewport position (a footer would land mid-image),
+// which is meaningless in document coordinates. Hiding fixed elements does not
+// change layout, so fullpage.png is the pure scrolling document — exactly what
+// the stitch interior is scored against.
+//
+// Captured after the session, this is the page in its SETTLED state: banners
+// dismissed, late content loaded. That makes it the reference for whether the
+// stitch reproduces the settled page rather than a transient early appearance.
+async function captureSettledReference(pageHeight) {
+  await evaluate('window.scrollTo(0, 0)');
+  await evaluate(`document.querySelectorAll(
+      '[data-region="header"],[data-region="footer"],[data-region="left"],' +
+      '[data-region="right"],#back-to-top,#cookie-banner')
+    .forEach(el => el.style.display = 'none')`);
+  await sleep(200);
+  const { data } = await call('Page.captureScreenshot', {
+    format: 'png',
+    clip: { x: 0, y: 0, width: VIEWPORT_W, height: pageHeight, scale: 1 },
+    captureBeyondViewport: true,
+  });
+  writeFileSync(join(OUT_DIR, 'fullpage.png'), Buffer.from(data, 'base64'));
+  console.log(`✔ content reference (chrome hidden, settled) → ${join(OUT_DIR, 'fullpage.png')} (${VIEWPORT_W}×${pageHeight})`);
+}
+
 // ── Plan: single (schema unchanged — the stitch benchmark consumes it) ───────
 async function runSingle(plan) {
   const gt = await loadPage('file://' + PAGE_FILE);
@@ -351,28 +378,7 @@ async function runSingle(plan) {
   console.log(`✔ ground truth → ${join(OUT_DIR, 'ground_truth.json')}`);
   console.log(`  trajectory: scrollRange [${minY}, ${maxY}]px, reachedBottom=${maxY >= maxScrollY}, maxGap=${maxGap}px`);
 
-  // Reference render for perceptual scoring: the browser's own full-page
-  // screenshot, captured AFTER the session so it cannot disturb the frames.
-  // The fixed chrome is HIDDEN for the capture: captureBeyondViewport renders
-  // position:fixed elements once at their viewport position (a footer would
-  // land mid-image), which is meaningless in document coordinates. Hiding
-  // fixed elements does not change layout, so fullpage.png is the pure
-  // scrolling document — exactly what the stitch interior is scored against.
-  if (PLAN_NAME === 'hostile') {
-    await evaluate('window.scrollTo(0, 0)');
-    await evaluate(`document.querySelectorAll(
-        '[data-region="header"],[data-region="footer"],[data-region="left"],' +
-        '[data-region="right"],#back-to-top')
-      .forEach(el => el.style.display = 'none')`);
-    await sleep(200);
-    const { data } = await call('Page.captureScreenshot', {
-      format: 'png',
-      clip: { x: 0, y: 0, width: VIEWPORT_W, height: gt.page.pageHeight, scale: 1 },
-      captureBeyondViewport: true,
-    });
-    writeFileSync(join(OUT_DIR, 'fullpage.png'), Buffer.from(data, 'base64'));
-    console.log(`✔ content reference (chrome hidden) → ${join(OUT_DIR, 'fullpage.png')} (${VIEWPORT_W}×${gt.page.pageHeight})`);
-  }
+  if (PLAN_NAME === 'hostile') await captureSettledReference(gt.page.pageHeight);
 }
 
 // ── Multi-page session runner (plans: multipage, revisit) ────────────────────
@@ -496,6 +502,13 @@ async function runSession(plan) {
     }
   }
   visits[visits.length - 1].lastFrame = frameNo - 1;
+
+  // The cookie page SETTLES during the session — the banner is dismissed and the
+  // real footer takes its place. A settled full-page reference therefore makes
+  // the question "does the stitch show the settled page, or a transient early
+  // appearance frozen in?" measurable by the existing ghost metric.
+  if (PLAN_NAME === 'cookie' && pages.length === 1)
+    await captureSettledReference(pages[0].pageHeight);
 
   const meta = {
     plan: PLAN_NAME,

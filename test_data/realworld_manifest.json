@@ -262,16 +262,16 @@
     "pages": 5,
     "pageHeightRange": [
      [
-      960,
-      1030
+      975,
+      1050
      ],
      [
       1830,
       1930
      ],
      [
-      975,
-      1050
+      960,
+      1030
      ],
      [
       3760,
@@ -282,7 +282,7 @@
       1030
      ]
     ],
-    "note": "Mobile flow inside a phone mockup. Production emits 19 stitches under a HIGH sensitivity setting (a new document version per mutation); we merge revisits under Normal, so the count is deliberately not comparable — 5 is our measured baseline and this is a drift guard only. Per-page heights track production within 8px where they correspond."
+    "note": "Mobile flow inside a phone mockup. Production emits 19 stitches under a HIGH sensitivity setting (a new document version per mutation); we merge revisits under Normal, so the count is deliberately not comparable — 5 is our measured baseline and this is a drift guard only. Caveat on the ORDER: most of the frame is the phone mockup itself, identical between screens, so which visit founds which page is sensitive to canvas content — the per-visit modal reconciliation (2026-07-28) regrouped two visits as revisits of page 0 without changing the count or the set of heights. Treat a reordering as a soft signal and an over/under count as hard."
    }
   }
  ]

@@ -55,11 +55,28 @@ constexpr int    RESIDUAL_BAND_H = 32;   // band height (px) for the median
 // correct adjacent content), so no gap remains.
 constexpr int INTERIOR_ROW_MARGIN = 12;
 
-// When an incoming frame write disagrees with already-stitched rows by more
-// than this (mean abs diff per row), the existing rows are kept — dynamic
-// content (animation, floating buttons) is frozen at its first observation
-// instead of being smeared across the page.
-constexpr double ROW_CONFLICT_MAD = 10.0;
+// ── Per-row modal reconciliation ─────────────────────────────────────────────
+// A document row is normally observed by many frames, and they do not always
+// agree. Keeping the FIRST observation and freezing it (the rule until
+// 2026-07-28) trusts the least trustworthy sighting: a page is still SETTLING
+// when a visit begins — cookie banners still up, late-loading content still
+// shifting the layout — so the first sighting is the one most likely to be
+// transient. Measured: session_cookie baked the dismissed banner across a text
+// line and an image (ghost madMean 6.14, badBlocks 4.56%), and rw3's page 2
+// lost 12 of its first headline's 31 rows to a 12px reflow that happened while
+// the opening frames were captured.
+//
+// So every observation VOTES and the appearance most frames agree on wins.
+// Votes are compact row SIGNATURES (per-bucket column means) rather than full
+// rows, so tracking several candidate appearances per row costs bytes instead
+// of a canvas copy each: 3 slots × 16 buckets × 3 channels ≈ 2MB for an
+// 11618-row page.
+constexpr int    ROW_SIG_BINS   = 16;
+constexpr int    ROW_VOTE_SLOTS = 3;
+// Mean per-channel signature difference below which two observations are the
+// SAME appearance. Slightly above the 10.0 row-agreement bar the old freeze
+// used, because bucket means average JPEG noise away.
+constexpr double ROW_SIG_MATCH  = 12.0;
 
 // ── Interior fixed overlays (floating buttons, cookie banners) ───────────────
 // A viewport-fixed element that is NOT edge-anchored appears in the pixel

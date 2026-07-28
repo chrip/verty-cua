@@ -66,6 +66,13 @@ Each page is reconstructed by its `PageStitcher` in three passes per visit:
    and painted from a thumb-free strip, because the thumb's position means
    nothing in document coordinates.
 
+Most document rows are seen by many frames, and they do not always agree — a
+page is still settling when a visit begins (banners up, late content still
+shifting the layout). So every observation of a row **votes**, and the appearance
+most frames agree on is the one kept; ties go to the later frame, because pages
+settle over time. That is what stops a dismissed cookie banner or a
+mid-reflow layout from being frozen into the result.
+
 A multi-page session yields one stitched PNG per page (`out_page0.png`, …);
 a single-page session writes exactly the `-o` path.
 

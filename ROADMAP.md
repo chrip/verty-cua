@@ -622,7 +622,70 @@ box: the disc scores **1.00**, and genuine overlays across the corpus land at
 candidates are now logged under `-v` (rw3 correctly rejects a 315×771 sprawl at
 MAD 30.8 and a 94×32 at 149.6).
 
-**A fragility this exposed, and the next thing worth fixing.** The scrollbar was
+### Per-row modal reconciliation: stop trusting the first sighting — 2026-07-28
+
+**The rule that was wrong.** `reconstruct()` wrote each document row from the
+FIRST frame that showed it and froze it there, refusing later frames that
+disagreed. That was built in M5 to stop animation smearing, and for that it
+works — but it trusts the *least* trustworthy observation. A page is still
+SETTLING when a visit begins: banners are still up, late-loading content is
+still shifting the layout. The first sighting is the one most likely to be
+transient, and freezing it makes a transient permanent.
+
+Two measured failures, both found by inspecting output against the DOM
+reference rather than by any benchmark number:
+- **session_cookie**: the dismissed cookie banner was baked in as a navy band
+  slicing a text line and the top edge of an image. Present in the first 35
+  frames of 110, absent in the remaining 75 — a clear minority, kept anyway.
+- **rw3 page 2**: the first headline ("Ihr Weg zu verlässlichen Produktdaten im
+  Internet") lost **12 of its 31 rows**, sliced horizontally. The cause was not
+  animation: every source frame renders it perfectly. The document **reflowed by
+  ~12px** while the visit's opening frames were captured, so the same content
+  belongs to two different document rows, and the freeze kept the pre-reflow
+  placement and refused the correction. The scrollbar thumb reads (17, 178) —
+  pinned at the track top — throughout those frames, which rules out a missed
+  scroll and proves it was the document that moved, not the viewport.
+
+**The rule now.** Every observation of a row VOTES; the appearance most frames
+agree on wins; ties go to the LATER frame, because a page settles as time
+passes. Votes are compact row signatures (per-bucket column means,
+`ROW_SIG_BINS`), so tracking `ROW_VOTE_SLOTS` candidate appearances per row costs
+~2MB for an 11618-row page instead of a canvas copy each, and a
+majority-of-k step handles rows with more appearances than slots.
+`reconstruct()` becomes two passes: count, then write each row from its winner.
+A continuously animating region has no majority — every observation differs —
+and still collapses to ONE coherent instant, which is what the freeze achieved
+and the reason it existed. `ROW_CONFLICT_MAD` and the ±2px `explainable()` drift
+test are gone.
+
+**Made measurable first** (tests-before-algorithms): `session_cookie` now
+captures a **settled** full-page reference (`fullpage.png`, taken after the
+session with the banner dismissed and chrome hidden — the recorder's hostile-only
+capture was factored into `captureSettledReference`), and the ghost metric is
+scored for any single-document session, multipage schema or not. That criterion
+FAILS on the old rule and PASSES on the new one, which is the whole point of
+adding it:
+
+| session_cookie ghost | first-observation freeze | modal reconciliation |
+|---|---|---|
+| madMean (tol 6.0) | **6.14 FAIL** | **2.57** |
+| madWorst | 194.18 | 4.32 |
+| badBlocks (tol 2%) | **4.56% FAIL** | **0.00%** |
+
+rw3 page 2's headline goes from 19 to 31 rows carrying ink, against production's
+29 — the 29 correct rows plus a 2-row remnant of the pre-reflow placement.
+
+**The vote is scoped to ONE VISIT**, and an earlier visit's rows are never
+overwritten by a later one. Settling happens *within* a visit; differences
+*between* visits are genuine content changes — a page that reloaded is a new
+document version, not a noisy observation of the old one — so a per-row majority
+across visits blends two versions into an incoherent canvas. This is not a
+theoretical worry: voting across visits dropped rw1's reload-REVISIT vote
+concentration from 0.526 to **0.429**, under the 0.5 bar, splitting that page in
+two. Scoping the vote per visit restored it and then some — **0.590**, more
+margin than the first-observation rule ever gave the suite's most fragile result.
+
+**A fragility the scrollbar work exposed, and the next thing worth fixing.** The scrollbar was
 first also excluded from the page identifier's sampling rect — principled, since
 the thumb tracks the scroll position and says nothing about WHICH page a frame
 shows. That cost rw5 a duplicate page (5 → 6) and the manifest guard caught it.

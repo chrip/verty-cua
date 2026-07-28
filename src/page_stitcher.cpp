@@ -1,5 +1,7 @@
 #include "page_stitcher.hpp"
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <iostream>
 
 // ── construction ──────────────────────────────────────────────────────────────
@@ -506,17 +508,12 @@ cv::Mat PageStitcher::reconstruct()
                             frame_h_ - header_h_ - footer_h_ - top_m - bot_m);
     if (interior.width <= 0 || interior.height <= 0) return canvas;
 
-    // Conflict-frozen writes: a document row, once stitched, is refreshed by a
-    // later frame only if the frames agree on it — where "agree" tolerates a
-    // small vertical drift (a row matching the canvas within ±2px is scroll
-    // accumulation error, not new content, and refreshing keeps each write
-    // self-consistent). A row that matches at NO nearby offset holds dynamic
-    // content (animation, a floating button over changing text) and is frozen
-    // at its first observation instead of being smeared across the page.
     // Overlay column masks per interior row: a row crossing an overlay copies
-    // (and compares) only the columns outside it. Content under the overlay is
-    // filled by frames where that document row was NOT under it — the overlay
-    // is viewport-fixed while the content scrolls past.
+    // only the columns outside it. Those masks depend on the VIEWPORT row, not
+    // the document row, so they are identical in every frame — which is what
+    // keeps the row signatures below comparable. Content under an overlay is
+    // recovered by the blank-fill pass from frames where that document row sat
+    // elsewhere in the viewport.
     std::vector<cv::Mat> row_mask(interior.height);   // empty = full row
     for (const cv::Rect& o : overlays_) {
         for (int fy = std::max(o.y, interior.y);
@@ -529,64 +526,164 @@ cv::Mat PageStitcher::reconstruct()
         }
     }
 
-    auto row_mad = [&](const cv::Mat& a, const cv::Mat& b, const cv::Mat& mask) {
-        const double n = mask.empty() ? interior.width : cv::countNonZero(mask);
-        if (n <= 0) return 0.0;
-        return cv::norm(a, b, cv::NORM_L1, mask) / (3.0 * n);
-    };
-    auto explainable = [&](const cv::Mat& incoming_row, int doc_row, const cv::Mat& mask) {
-        for (int s = -2; s <= 2; ++s) {
-            const int y = doc_row + s;
-            if (y < 0 || y >= static_cast<int>(doc_h)) continue;
-            if (row_mad(incoming_row, canvas(cv::Rect(interior.x, y, interior.width, 1)), mask)
-                    <= ROW_CONFLICT_MAD)
-                return true;
+    // ── Per-row modal reconciliation ─────────────────────────────────────────
+    // Every observation of a document row votes; the appearance most frames
+    // agree on wins, and ties go to the LATER frame because a page settles as
+    // time passes. See types.hpp (ROW_SIG_*) for why first-observation freezing
+    // was wrong and what it cost. A continuously animating region has no
+    // majority — every observation differs — and still collapses to ONE coherent
+    // instant, which is exactly what the old freeze achieved and why it existed.
+    // The vote is scoped to ONE VISIT, and an earlier visit's rows are never
+    // overwritten by a later one. Settling is a within-visit phenomenon;
+    // differences BETWEEN visits are genuine content changes — a page that
+    // reloaded is a new document version, not a noisy observation of the old one
+    // — so a per-row majority across visits would blend two versions into an
+    // incoherent canvas. Measured: voting across visits dropped rw1's
+    // reload-REVISIT vote concentration from 0.526 to 0.429, under the 0.5 bar,
+    // splitting that page in two.
+    using RowSig = std::array<uint8_t, ROW_SIG_BINS * 3>;
+    struct Candidate { RowSig sig{}; int count = 0; long frame = -1; };
+    struct RowVotes  { Candidate slot[ROW_VOTE_SLOTS]; };
+
+    // Bucketed column means of one interior row. Unmasked rows (the common case)
+    // go through an INTER_AREA resize, which IS the per-bucket mean; a masked
+    // row is averaged by hand over its visible columns only. A row is either
+    // always masked or never, so the two paths never describe the same row.
+    auto signature = [&](const cv::Mat& row, const cv::Mat& mask, RowSig& out) {
+        if (mask.empty()) {
+            cv::Mat small;
+            cv::resize(row, small, cv::Size(ROW_SIG_BINS, 1), 0, 0, cv::INTER_AREA);
+            std::memcpy(out.data(), small.data, out.size());
+            return true;
         }
-        return false;
+        const uint8_t* p = row.ptr<uint8_t>(0);
+        const uint8_t* m = mask.ptr<uint8_t>(0);
+        int used = 0;
+        for (int b = 0; b < ROW_SIG_BINS; ++b) {
+            const int x0 = b * interior.width / ROW_SIG_BINS;
+            const int x1 = (b + 1) * interior.width / ROW_SIG_BINS;
+            long acc[3] = {0, 0, 0};
+            int n = 0;
+            for (int x = x0; x < x1; ++x) {
+                if (!m[x]) continue;
+                acc[0] += p[3 * x]; acc[1] += p[3 * x + 1]; acc[2] += p[3 * x + 2];
+                ++n;
+            }
+            used += n;
+            for (int c = 0; c < 3; ++c)
+                out[static_cast<size_t>(b * 3 + c)] =
+                    n ? static_cast<uint8_t>(acc[c] / n) : 0;
+        }
+        return used * 2 >= interior.width;   // too little visible to judge
     };
+    auto sig_diff = [](const RowSig& a, const RowSig& b) {
+        int acc = 0;
+        for (size_t i = 0; i < a.size(); ++i)
+            acc += std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i]));
+        return static_cast<double>(acc) / static_cast<double>(a.size());
+    };
+    auto offset_of = [](const VisitTrace& t, long frame_index) {
+        const long local = frame_index - t.visit.firstFrame;
+        const long vt = local < static_cast<long>(t.vt_by_frame.size())
+                            ? t.vt_by_frame[static_cast<size_t>(local)]
+                            : (t.vt_by_frame.empty() ? 0 : t.vt_by_frame.back());
+        return std::max(0L, vt);
+    };
+
     // Per-pixel written map over the interior columns: 255 where a real content
-    // pixel has been placed. Overlay columns start unwritten (masked out below),
-    // which drives the blank-fill pass.
+    // pixel has been placed. Overlay columns stay unwritten, which drives the
+    // blank-fill pass.
     cv::Mat written = cv::Mat::zeros(static_cast<int>(doc_h), interior.width, CV_8UC1);
     std::vector<uint8_t> row_written(static_cast<size_t>(doc_h), 0);
+
     for (const VisitTrace& trace : visits_) {
+      // Pass A — count the appearances of every document row IN THIS VISIT.
+      std::vector<RowVotes> votes(static_cast<size_t>(doc_h));
+      {
         VideoSource video = open_at(trace.visit);
         if (!video.ok()) continue;
 
         VideoSource::Frame f;
         while (video.next(f) && f.index <= trace.visit.lastFrame) {
-            const long local = f.index - trace.visit.firstFrame;
-            long vt = local < static_cast<long>(trace.vt_by_frame.size())
-                          ? trace.vt_by_frame[local]
-                          : (trace.vt_by_frame.empty() ? 0 : trace.vt_by_frame.back());
-            vt = std::max(0L, vt);
-            const int dst_y = static_cast<int>(vt) + interior.y;
+            const int dst_y = static_cast<int>(offset_of(trace, f.index)) + interior.y;
+            if (dst_y + interior.height > static_cast<int>(doc_h)) continue;   // safety
+
+            const cv::Mat incoming = f.bgr(interior);
+            for (int row = 0; row < interior.height; ++row) {
+                RowSig sig;
+                if (!signature(incoming.row(row), row_mask[row], sig)) continue;
+                RowVotes& v = votes[static_cast<size_t>(dst_y + row)];
+                int match = -1, free_slot = -1;
+                for (int k = 0; k < ROW_VOTE_SLOTS; ++k) {
+                    if (v.slot[k].count <= 0) { if (free_slot < 0) free_slot = k; continue; }
+                    if (sig_diff(v.slot[k].sig, sig) <= ROW_SIG_MATCH) { match = k; break; }
+                }
+                if (match >= 0) {
+                    ++v.slot[match].count;
+                    v.slot[match].frame = f.index;   // latest exemplar of this appearance
+                } else if (free_slot >= 0) {
+                    v.slot[free_slot] = {sig, 1, f.index};
+                } else {
+                    // More distinct appearances than slots — the classic
+                    // majority-of-k step: weaken every candidate, which frees a
+                    // slot for whichever appearance keeps recurring.
+                    for (int k = 0; k < ROW_VOTE_SLOTS; ++k) --v.slot[k].count;
+                }
+            }
+        }
+      }
+
+      // The frame that won each document row (-1 = no vote: more than half the
+      // row is permanently overlay-masked, so any frame of this visit will do).
+      std::vector<long> winner(static_cast<size_t>(doc_h), -1);
+      for (long y = 0; y < doc_h; ++y) {
+          const RowVotes& v = votes[static_cast<size_t>(y)];
+          int best = -1;
+          for (int k = 0; k < ROW_VOTE_SLOTS; ++k) {
+              if (v.slot[k].count <= 0) continue;
+              if (best < 0 || v.slot[k].count > v.slot[best].count
+                  || (v.slot[k].count == v.slot[best].count
+                      && v.slot[k].frame > v.slot[best].frame))
+                  best = k;
+          }
+          if (best >= 0) winner[static_cast<size_t>(y)] = v.slot[best].frame;
+      }
+
+      // Pass B — write this visit's rows from their winning frames, leaving rows
+      // an earlier visit already filled untouched.
+      {
+        VideoSource video = open_at(trace.visit);
+        if (!video.ok()) continue;
+
+        VideoSource::Frame f;
+        while (video.next(f) && f.index <= trace.visit.lastFrame) {
+            const int dst_y = static_cast<int>(offset_of(trace, f.index)) + interior.y;
             if (dst_y + interior.height > static_cast<int>(doc_h)) continue;   // safety
 
             const cv::Mat incoming = f.bgr(interior);
             for (int row = 0; row < interior.height; ++row) {
                 const int doc_row = dst_y + row;
+                if (row_written[doc_row]) continue;          // earlier visit owns it
+                if (winner[static_cast<size_t>(doc_row)] >= 0
+                    && winner[static_cast<size_t>(doc_row)] != f.index) continue;
+
                 const cv::Mat& mask = row_mask[row];
-                cv::Mat dst = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
-                if (row_written[doc_row]
-                    && row_mad(incoming.row(row), dst, mask) > ROW_CONFLICT_MAD
-                    && !explainable(incoming.row(row), doc_row, mask))
-                    continue;   // dynamic content: keep the first observation
+                cv::Mat dst  = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
                 cv::Mat wrow = written.row(doc_row);
                 if (mask.empty()) { incoming.row(row).copyTo(dst);       wrow.setTo(255); }
                 else              { incoming.row(row).copyTo(dst, mask); wrow.setTo(255, mask); }
                 row_written[doc_row] = 1;
             }
         }
+      }
     }
 
     // Blank-fill pass: interior pixels still unwritten sat behind a
-    // viewport-fixed overlay in EVERY frame that stitched their document row
-    // (the conflict-freeze also refuses to fill a blank column, seeing the
-    // white gap as disagreement). Recover them from any frame that shows the
-    // same document row at a viewport position clear of the overlays — a blank
-    // pixel has nothing to conflict with, so this pass takes the first sighting.
-    // Only needed when overlays created masked columns.
+    // viewport-fixed overlay in the frame that won their document row. Recover
+    // them from any frame that shows the same document row at a viewport
+    // position clear of the overlays — a blank pixel has nothing to disagree
+    // with, so this pass takes the first sighting. Only needed when overlays
+    // created masked columns.
     if (!overlays_.empty()) {
         const long before = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written);
         for (const VisitTrace& trace : visits_) {
