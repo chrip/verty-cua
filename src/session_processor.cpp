@@ -12,6 +12,7 @@ SessionProcessor::SessionProcessor(std::string video_path, bool verbose,
     frame_h_ = probe.height();
     fps_     = probe.fps();
     ok_ = frame_w_ > 0 && frame_h_ > 0;
+    if (ok_) scrollbar_ = std::make_unique<ScrollbarTracker>(frame_w_, frame_h_);
 }
 
 // ── classify_transitions (session pass) ──────────────────────────────────────
@@ -36,6 +37,7 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
     cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
     prev_gray = curr_gray.clone();
     transitions.push_back({TransitionType::Identical, 0});   // frame 0 placeholder
+    if (scrollbar_) scrollbar_->observe(curr_gray);
 
     FixedAccumulator   chrome(frame_w_, frame_h_);
     DynamicAccumulator noise(frame_w_, frame_h_);
@@ -45,6 +47,10 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
     counts_ = {};
     while (video.next(f)) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
+        // The scrollbar band is a property of the session, so it is learned in
+        // the pass that already visits every frame. observe() no-ops once the
+        // band is located, so a second classification pass costs nothing.
+        if (scrollbar_) scrollbar_->observe(curr_gray);
         Transition tr = classifier_.classify(prev_gray, curr_gray,
                                              chrome_mask, noise_mask);
         counts_.add(tr.type);
@@ -77,6 +83,7 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
         prev_gray = curr_gray.clone();
     }
     noise_mask_ = noise_mask;
+    if (scrollbar_) scrollbar_->locate();
     return transitions;
 }
 
@@ -120,6 +127,13 @@ bool SessionProcessor::run()
                   << " scroll=" << counts_.scroll
                   << " pageChange=" << counts_.pageChange
                   << " unstable=" << counts_.unstable << "\n";
+        if (scrollbar_ && scrollbar_->located()) {
+            const cv::Rect b = scrollbar_->band();
+            std::cout << "[session] vertical scrollbar at x=" << b.x << ".."
+                      << b.x + b.width - 1 << " (" << b.width << "px wide)\n";
+        } else {
+            std::cout << "[session] no vertical scrollbar found\n";
+        }
         std::cout << "[session] visits=" << seg.visits.size();
         for (const PageVisit& v : seg.visits)
             std::cout << "  [" << v.firstFrame << ".." << v.lastFrame << "]";
@@ -130,7 +144,7 @@ bool SessionProcessor::run()
     // Content-free visits — blank loading screens between navigations on real
     // recordings — are dropped: a page has content, a white frame does not.
     PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_,
-                          sensitivity_);
+                          sensitivity_, scrollbar_.get());
     navigations_.clear();
     int  prev_page = 0;
     bool have_page = false;
@@ -149,7 +163,11 @@ bool SessionProcessor::run()
         }
 
         const PageRegistry::Assignment a = registry.assign(visit, first_gray);
-        if (have_page)
+        // A continuation is NOT a navigation: the viewport jumped inside one
+        // document. The jump is reported as a large scroll event by the page's
+        // stitcher, so emitting a navigation here would double-count it and
+        // claim a page transition that never happened.
+        if (have_page && !a.continuation)
             navigations_.push_back({visit.firstFrame, prev_page, a.pageId,
                                     a.navType, a.confidence, a.vtStart});
         prev_page = a.pageId;
@@ -166,6 +184,7 @@ bool SessionProcessor::run()
         page.overlays     = rec.stitcher->overlays();
         page.scrollEvents = rec.stitcher->scroll_events();
         page.visits       = rec.stitcher->visits();
+        page.gaps         = rec.stitcher->gaps();
         pages_.push_back(std::move(page));
     }
 

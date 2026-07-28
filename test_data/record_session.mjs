@@ -45,7 +45,7 @@ let PLAN_NAME = 'single';
 const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
 const PLANS = ['single', 'multipage', 'revisit', 'hostile',
-               'noscroll', 'revisit_noscroll', 'cookie', 'jumps'];
+               'noscroll', 'revisit_noscroll', 'cookie', 'jumps', 'fling'];
 if (!PLANS.includes(PLAN_NAME)) {
   console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
@@ -54,7 +54,8 @@ const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
                        revisit: 'session_revisit', hostile: 'session_hostile',
                        noscroll: 'session_noscroll',
                        revisit_noscroll: 'session_revisit_noscroll',
-                       cookie: 'session_cookie', jumps: 'session_jumps' };
+                       cookie: 'session_cookie', jumps: 'session_jumps',
+                       fling: 'session_fling' };
 const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
                        cookie:  'scroll_page_cookie.html' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
@@ -116,6 +117,31 @@ const JUMPS_PLAN = [
   { jump: 0.68 }, { pause: 10 },
   { jump: 0.85 }, { pause: 10 },
   { jump: 1.00 }, { pause: 12 },
+];
+
+// Fling plan: see the whole document, then LEAP across it in a single frame —
+// back to the top, then forward to the bottom again. Each leap is 1647-2353px:
+// beyond MAX_SCROLL, and beyond the PHYSICAL limit of frame-to-frame matching
+// (viewport − header − footer ≈ 772px here), so the frames either side of a
+// leap share NO pixels and no frame-pair method can measure it. To a classifier
+// that sees only two frames, a leap is indistinguishable from a navigation.
+//
+// Both leaps land in territory the session has ALREADY SEEN, which is what
+// makes them recoverable: the page's own stitched canvas is the evidence, and
+// re-localizing against it is intra-page re-localization by CONTENT (the
+// scrollbar path cannot be exercised in the lab — CDP screenshots contain no
+// scrollbar, verified across all fixtures; rw4_portal is its only test).
+//
+// The session never leaves the page, so the required OUTCOME is: exactly one
+// page, ZERO navigation events, and each leap reported as one large scroll
+// event. PAGE_CHANGE transitions are expected here and are not a failure —
+// see PAGECHANGE_EXPECTED in test_stitch_session.py.
+const FLING_PLAN = [
+  { pause: 10 },
+  { to: 1.00 },   { pause: 12 },   // see the whole document
+  { jump: 0.00 }, { pause: 12 },   // leap back to the top      (−2353px)
+  { to: 0.30 },   { pause: 10 },   // scroll down again (content-tracked)
+  { jump: 1.00 }, { pause: 14 },   // leap back to the bottom   (+1647px)
 ];
 
 // Multi-page WITHOUT scrolling: page-change and REVISIT detection must work
@@ -510,6 +536,7 @@ try {
   else if (PLAN_NAME === 'cookie')           await runSession(COOKIE_PLAN);
   else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
   else if (PLAN_NAME === 'jumps')            await runSingle(JUMPS_PLAN);
+  else if (PLAN_NAME === 'fling')            await runSingle(FLING_PLAN);
   else                                       await runSingle(SINGLE_PLAN);   // single + hostile
 } catch (e) {
   console.error('record failed:', e.message);

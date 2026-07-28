@@ -59,6 +59,15 @@ TOLERANCE = {"width": 0, "height": 32, "header": 48, "footer": 48, "left": 48, "
 # the stitch's -2px height drift. pageChanges=0. Tolerances = baseline + margin.
 SCROLL_TOLERANCE = {"dyErrorSum": 12, "eventCountDiff": 8, "pageChanges": 0}
 
+# Sessions where the classifier is EXPECTED to report PAGE_CHANGE transitions
+# even though the session never leaves the page. A scroll jump beyond the
+# shared-pixel window (viewport − header − footer) is indistinguishable from a
+# navigation to anything that looks at two frames, so it is classified as a page
+# change and the registry re-localizes it afterwards. What must hold for these
+# sessions is the OUTCOME — one page, ZERO navigation events, and the jump
+# present as one large scroll event — not the intermediate classification.
+PAGECHANGE_EXPECTED = {"session_fling"}
+
 # Multipage tolerances (Milestone 3). Baseline measured 2026-07-03 (totalError
 # 82px): boundaryErr=0 (the fixture's hard 1-frame cut detected exactly),
 # page-0 height -2 / page-1 height 0; fixed bands on the short 282px visit:
@@ -228,9 +237,15 @@ def score_scroll(report, gt):
 
 
 # ── Single-session scoring ────────────────────────────────────────────────────
-def score_single(report, gt):
+def score_single(report, gt, allow_page_change=False):
     pages = report.get("pages", [])
-    seg_ok = len(pages) == 1 and report.get("transitions", {}).get("pageChange", -1) == 0
+    # A single-page session must yield ONE page and NO navigation events. The
+    # navigation count is the real criterion: a re-localized scroll jump leaves
+    # a PAGE_CHANGE transition behind but must not be reported as a navigation.
+    seg_ok = (len(pages) == 1
+              and len(report.get("navigations", [])) == 0
+              and (allow_page_change
+                   or report.get("transitions", {}).get("pageChange", -1) == 0))
 
     p0 = pages[0] if pages else {"width": 0, "docHeight": 0, "fixedRects": []}
     bands = fixed_from_rects(p0["fixedRects"])
@@ -262,7 +277,7 @@ def score_single(report, gt):
     return metrics, total_error, stitch_pass, seg_ok
 
 
-def print_single(metrics, total_error, stitch_pass, scroll):
+def print_single(metrics, total_error, stitch_pass, scroll, report, allow_page_change):
     print(f"  {'metric':<8}{'measured':>10}{'expected':>10}{'error':>8}   status")
     print("  " + "-" * 46)
     for k in ("width", "height", "header", "footer", "left", "right"):
@@ -273,9 +288,17 @@ def print_single(metrics, total_error, stitch_pass, scroll):
     print(f"  totalError = {total_error}px    stitch: {'PASS' if stitch_pass else 'FAIL'}")
     print(f"\n  Scroll events:  gt={scroll['gtEvents']}  algo={scroll['algoEvents']}"
           f"  countDiff={scroll['eventCountDiff']} (tol {SCROLL_TOLERANCE['eventCountDiff']})")
+    pc_note = "expected (re-localized)" if allow_page_change else "must be 0"
     print(f"  dyErrorSum = {scroll['dyErrorSum']}px (tol {SCROLL_TOLERANCE['dyErrorSum']})"
-          f"    pageChanges = {scroll['pageChanges']} (must be 0)"
+          f"    pageChanges = {scroll['pageChanges']} ({pc_note})"
           f"    scroll: {'PASS' if scroll['pass'] else 'FAIL'}")
+    pages = report.get("pages", [])
+    relocalized = sum(1 for p in pages for v in p.get("visits", []) if v.get("relocalized"))
+    gaps = [g for p in pages for g in p.get("gaps", [])]
+    print(f"  pages = {len(pages)} (must be 1)   navigations = "
+          f"{len(report.get('navigations', []))} (must be 0)   "
+          f"re-localized visits = {relocalized}"
+          + (f"   never-observed rows = {sum(g['to'] - g['from'] for g in gaps)}px" if gaps else ""))
 
 
 # ── Multipage-session scoring ─────────────────────────────────────────────────
@@ -354,9 +377,29 @@ def print_multipage(checks, total_error, seg_pass, fixed_na, scroll):
 
 
 # ── Real-world sessions (no ground truth; production stitches as reference) ──
+def manifest_expect(session):
+    """Per-case expectations from the committed realworld_manifest.json, if any.
+
+    The real corpus has no frame-by-frame ground truth, so these are DRIFT
+    GUARDS anchored on the measured baseline, not derived truth: an exact page
+    count plus a height window per page. They exist because the structural
+    checks alone (runs, ≥1 page) could not tell a page-for-page reconstruction
+    from a fractured one — rw4 passed structurally while truncating its deep
+    page to 48% and inventing a third page."""
+    path = os.path.join(HERE, "realworld_manifest.json")
+    if not os.path.exists(path):
+        return None
+    name = os.path.basename(session.rstrip(os.sep))
+    for case in json.load(open(path)).get("cases", []):
+        if case.get("name") == name:
+            return case.get("expect")
+    return None
+
+
 def score_realworld(report, session):
     """Structural scoring for real screencasts: the tool must run, segment into
-    ≥1 page and produce plausible geometry. The DOM-based production stitches
+    ≥1 page and produce plausible geometry, plus the manifest's per-case
+    expectations where they exist. The DOM-based production stitches
     (production/*.jpg) are printed for comparison — they are a reference, not
     ground truth (production sensitivity settings differ per web element)."""
     vh = report["video"]["viewport"]["h"]
@@ -369,6 +412,19 @@ def score_realworld(report, session):
         "scrollEvents": len(report.get("scrollEvents", [])),
     }
     checks["pass"] = checks["pagesOk"] and checks["heightsOk"]
+
+    exp = manifest_expect(session)
+    if exp:
+        heights = [p["docHeight"] for p in pages]
+        checks["pagesExpected"] = exp["pages"]
+        checks["pagesMatch"]    = len(pages) == exp["pages"]
+        windows = exp.get("pageHeightRange") or []
+        checks["heightsInRange"] = (
+            len(windows) == len(heights)
+            and all(lo <= h <= hi for h, (lo, hi) in zip(heights, windows)))
+        checks["heightWindows"] = windows
+        checks["pass"] = (checks["pass"] and checks["pagesMatch"]
+                          and checks["heightsInRange"])
 
     production = []
     for j in sorted(glob.glob(os.path.join(session, "production", "*_orig.jpg"))):
@@ -386,6 +442,16 @@ def print_realworld(checks, production, report):
     ours = [(p['width'], p['docHeight']) for p in report.get('pages', [])]
     print(f"  our stitches:        {ours}")
     print(f"  production (DOM ref): {[(p['w'], p['h']) for p in production]}")
+    if "pagesExpected" in checks:
+        print(f"  manifest expects:     pages={checks['pagesExpected']} "
+              f"({'ok' if checks['pagesMatch'] else 'MISMATCH'})   "
+              f"heights in {checks['heightWindows']} "
+              f"({'ok' if checks['heightsInRange'] else 'OUT OF RANGE'})")
+    gaps = [(i, g) for i, p in enumerate(report.get("pages", [])) for g in p.get("gaps", [])]
+    if gaps:
+        total = sum(g["to"] - g["from"] for _, g in gaps)
+        print(f"  never observed:       {total}px over {len(gaps)} range(s) "
+              f"{[(i, g['from'], g['to']) for i, g in gaps]} — skipped by a jump, left blank")
 
 
 import glob
@@ -465,8 +531,10 @@ def main():
         checks, total_error, seg_pass, fixed_na = score_multipage(report, gt)
         passed = seg_pass and scroll["pass"]
     else:
-        metrics, total_error, stitch_pass, seg_ok = score_single(report, gt)
-        passed = (stitch_pass and scroll["pass"] and scroll["pageChanges"] == 0
+        allow_pc = os.path.basename(session.rstrip(os.sep)) in PAGECHANGE_EXPECTED
+        metrics, total_error, stitch_pass, seg_ok = score_single(report, gt, allow_pc)
+        passed = (stitch_pass and scroll["pass"]
+                  and (allow_pc or scroll["pageChanges"] == 0)
                   and (ghost is None or ghost["pass"]))
 
     # ── Archive outputs under unique, self-describing names ───────────────────
@@ -529,7 +597,7 @@ def main():
     elif multipage:
         print_multipage(checks, total_error, seg_pass, fixed_na, scroll)
     else:
-        print_single(metrics, total_error, stitch_pass, scroll)
+        print_single(metrics, total_error, stitch_pass, scroll, report, allow_pc)
     if ghost is not None:
         print(f"\n  Ghost score vs fullpage.png:  madMean={ghost['madMean']} "
               f"(tol {GHOST_TOLERANCE['madMean']})  madWorst={ghost['madWorst']}"

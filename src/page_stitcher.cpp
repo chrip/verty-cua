@@ -4,12 +4,15 @@
 
 // ── construction ──────────────────────────────────────────────────────────────
 PageStitcher::PageStitcher(std::string video_path, int frame_w, int frame_h,
-                           double fps, bool verbose, int page_id)
+                           double fps, bool verbose, int page_id,
+                           const ScrollbarTracker* scrollbar)
     : video_path_(std::move(video_path)),
       frame_w_(frame_w), frame_h_(frame_h), fps_(fps),
       verbose_(verbose), page_id_(page_id),
       accumulator_(frame_w, frame_h),
-      noise_accumulator_(frame_w, frame_h)
+      noise_accumulator_(frame_w, frame_h),
+      scrollbar_(scrollbar),
+      sb_map_(frame_h)
 {
     fixed_mask_ = cv::Mat::zeros(frame_h_, frame_w_, CV_8UC1);
 }
@@ -22,11 +25,25 @@ VideoSource PageStitcher::open_at(const PageVisit& v) const
 }
 
 // ── add_visit ─────────────────────────────────────────────────────────────────
-void PageStitcher::add_visit(const PageVisit& visit, long vt_start)
+void PageStitcher::add_visit(const PageVisit& visit, long vt_start,
+                             bool bridged, long vt_uncertainty)
 {
     if (frame_w_ <= 0 || frame_h_ <= 0) return;
+
+    // A re-localized jump is a SCROLL, not a navigation: the viewport moved
+    // within one document. Emitting it as a scroll event keeps the contract's
+    // first deliverable truthful — the trace would otherwise show the document
+    // teleporting between two visits with no event to account for it.
+    if (bridged && !visits_.empty() && !visits_.back().vt_by_frame.empty()) {
+        const long from = visits_.back().vt_by_frame.back();
+        scroll_events_.push_back({visit.firstFrame,
+                                  static_cast<double>(visit.firstFrame) / fps_,
+                                  static_cast<int>(vt_start - from),
+                                  vt_start});
+    }
+
     analyze_visit(visit, vt_start);
-    refine_visit(visit, vt_start);
+    refine_visit(visit, vt_start, bridged, vt_uncertainty);
     // After refine: needs the band-source frames for its texture filter.
     extract_overlays();
 }
@@ -77,7 +94,8 @@ void PageStitcher::analyze_visit(const PageVisit& visit, long vt_start)
 // Re-classify the visit's transitions with the page's fixed mask, producing the
 // authoritative scroll offsets. Also tracks the frames showing the document's
 // shallowest / deepest point (band sources for stamping).
-void PageStitcher::refine_visit(const PageVisit& visit, long vt_start)
+void PageStitcher::refine_visit(const PageVisit& visit, long vt_start,
+                                bool bridged, long vt_uncertainty)
 {
     VideoSource video = open_at(visit);
     if (!video.ok()) return;
@@ -89,8 +107,10 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start)
     prev_gray = curr_gray.clone();
 
     VisitTrace trace;
-    trace.visit    = visit;
-    trace.vt_start = vt_start;
+    trace.visit          = visit;
+    trace.vt_start       = vt_start;
+    trace.vt_uncertainty = vt_uncertainty;
+    trace.bridged        = bridged;
 
     long vt = std::max(0L, vt_start);
     trace.vt_by_frame.push_back(vt);
@@ -100,6 +120,15 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start)
         if (v >= max_vt_)                { max_vt_ = v; bgr.copyTo(last_frame_);  }
     };
     track_extremes(vt, f.bgr);
+
+    // Calibrate this page's scrollbar map from the offsets tracked here. The
+    // offsets are authoritative (this is the mask-aware pass), so they are the
+    // right anchors; the map refuses anchors that contradict it, which keeps it
+    // tied to the trustworthy prefix if the chain later breaks.
+    auto calibrate = [&](const cv::Mat& gray, long v) {
+        if (scrollbar_ && scrollbar_->located()) sb_map_.add(scrollbar_->read(gray), v);
+    };
+    calibrate(curr_gray, vt);
 
     while (video.next(f) && f.index <= visit.lastFrame) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
@@ -111,18 +140,30 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start)
 
         trace.vt_by_frame.push_back(vt);
         track_extremes(vt, f.bgr);
+        calibrate(curr_gray, vt);
         prev_gray = curr_gray.clone();
     }
 
     append_scroll_events(trace);
     visits_.push_back(std::move(trace));
 
-    if (verbose_)
+    if (verbose_) {
         std::cout << "[page " << page_id_ << " refine] visit ["
                   << visit.firstFrame << ".." << visit.lastFrame << "]"
-                  << "  vtStart=" << vt_start
+                  << "  vtStart=" << vt_start;
+        if (vt_uncertainty > 0) std::cout << "±" << vt_uncertainty;
+        std::cout << (bridged ? " (bridged)" : "")
                   << "  docHeight=" << doc_height() << "px"
                   << "  scrollEvents=" << scroll_events_.size() << "\n";
+        if (sb_map_.valid())
+            std::cout << "[page " << page_id_ << " scrollbar] thumbH="
+                      << sb_map_.fingerprint() << "  map vt="
+                      << sb_map_.slope() << "*thumbTop+b  ("
+                      << (sb_map_.slope_fitted() ? "fitted" : "geometric")
+                      << ", " << sb_map_.points() << " anchors, residual "
+                      << sb_map_.residual() << "px, " << sb_map_.rejected()
+                      << " rejected)\n";
+    }
 }
 
 // ── append_scroll_events ──────────────────────────────────────────────────────
@@ -527,6 +568,35 @@ cv::Mat PageStitcher::reconstruct()
             const long after = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written);
             std::cout << "[page " << page_id_ << " blank-fill] unwritten "
                       << before << " -> " << after << " interior px\n";
+        }
+    }
+
+    // ── Never-observed rows ──────────────────────────────────────────────────
+    // A jump beyond the shared-pixel window skips document content outright: no
+    // frame ever showed those rows, so nothing can recover them. They stay blank
+    // and are DECLARED (report `gaps`) rather than presented as page content —
+    // the same honesty rule as the fixed bands' uncertainty. Only the scrolling
+    // span is examined: the rows above/below it belong to the header and footer
+    // stamps, which cover them by construction.
+    gaps_.clear();
+    {
+        const long content_top = interior.y;
+        const long content_bot = doc_h - (frame_h_ - (interior.y + interior.height));
+        long run_start = -1;
+        for (long y = content_top; y <= content_bot && content_bot > content_top; ++y) {
+            const bool blank = y < content_bot
+                               && cv::countNonZero(written.row(static_cast<int>(y))) == 0;
+            if (blank && run_start < 0) run_start = y;
+            if (!blank && run_start >= 0) {
+                if (y - run_start >= GAP_MIN_ROWS) gaps_.push_back({run_start, y});
+                run_start = -1;
+            }
+        }
+        if (verbose_ && !gaps_.empty()) {
+            long total = 0;
+            for (const Gap& g : gaps_) total += g.to - g.from;
+            std::cout << "[page " << page_id_ << " gaps] " << gaps_.size()
+                      << " never-observed range(s), " << total << "px total\n";
         }
     }
 

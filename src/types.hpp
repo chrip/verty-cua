@@ -82,6 +82,9 @@ constexpr int PAGE_STABLE_CONFIRM = 3;  // stable transitions that close a page-
 // A visit whose first frame is nearly uniform (gray stddev below this) is a
 // blank loading screen, not a page — it produces no stitch and no navigation.
 constexpr double BLANK_VISIT_STDDEV = 6.0;
+// Shortest run of never-observed document rows worth reporting as a gap.
+// Single rows at a write boundary are offset quantization, not skipped content.
+constexpr int GAP_MIN_ROWS = 8;
 
 // ── Persistent dynamic noise (fixed-position video ads, tickers) ─────────────
 // A pixel that changes during MANY non-scroll transitions is persistent
@@ -96,6 +99,82 @@ constexpr int DYNAMIC_CONFIRM_FRAMES = 25;
 // Ignore the noise mask entirely if it claims more than this fraction of the
 // frame (safety against runaway accumulation).
 constexpr double DYNAMIC_MASK_MAX_FRACTION = 0.4;
+
+// ── Vertical scrollbar: absolute-offset evidence for unexplained jumps ───────
+// A user DRAGGING the scrollbar thumb (or flinging) moves the document by
+// thousands of pixels between two frames — measured on rw4_portal: 4356px in
+// one 3.89fps frame step. Past `viewport − header − footer` two consecutive
+// frames share NO pixels at all, so neither frame-to-frame matching nor
+// frame-to-canvas matching has anything to work with; measured on that very
+// jump: "[registry] visit [151..158] vs page 1: confidence 0 conc 0 blocks 0".
+// The browser's own scrollbar is then the ONLY pixel signal left that reveals
+// where in the document the viewport sits. It is read geometrically: the bar is
+// a column band carrying exactly TWO gray levels (a light track and a darker
+// thumb); the thumb's TOP encodes the scroll offset and its HEIGHT encodes the
+// document height (thumb_h / track_h = viewport_h / docHeight).
+constexpr int    SB_SEARCH_COLS    = 64;   // columns searched inward from the right edge
+constexpr int    SB_LEVEL_TOL      = 6;    // gray tolerance when binning one level (JPEG noise)
+constexpr int    SB_MIN_CONTRAST   = 15;   // track↔thumb gap; measured 47 idle, 73 hover, 121 dragged
+constexpr double SB_LEVEL_COVER    = 0.90; // the two levels must cover this share of the column —
+                                           // the arrow buttons are the remainder (2×17 of 930 = 3.7%)
+constexpr double SB_RUN_PURITY     = 0.90; // share of the darker level lying inside ONE run
+constexpr int    SB_MIN_THUMB_H    = 10;   // shorter runs are glyphs/noise, not a thumb.
+                                           // The arrow-button glyphs are 3–4 rows in every real
+                                           // session; the smallest real thumb measured is 65px.
+constexpr int    SB_MIN_WIDTH      = 6;    // narrowest bar accepted; measured 16px on the corpus
+constexpr int    SB_MAX_WIDTH      = 24;   // widest accepted: a broad "band" is page content that
+                                           // spans the viewport width, not a scrollbar
+constexpr int    SB_EDGE_SLACK     = 3;    // non-bar columns tolerated at the very right edge
+constexpr double SB_BAR_FRAME_FRAC = 0.6;  // share of observed frames a column must look bar-like in
+// The thumb MUST MOVE. Any static dark block in the right-edge columns is
+// otherwise a flawless two-level column: measured on the lab fixtures, whose
+// 72px dark fixed header reaches x=1258..1279 and was accepted as a 14px-wide
+// "scrollbar" with zero travel. Real thumbs travel the track (measured spans:
+// 355px on rw4's deep page, 696px on rw2, 773px on rw3).
+constexpr int    SB_MIN_THUMB_TRAVEL = 8;
+
+// Calibration of thumb_top → document offset. The slope is fixed by GEOMETRY:
+// a = viewport_h / thumb_h (one thumb pixel is worth one viewport height of
+// document per thumb height). Measured on rw4 — deep page geometric 12.917 vs
+// least-squares 12.966 (0.4% apart), short page 1.6146 vs 1.6161. The
+// least-squares fit is preferred where the anchors span enough track, because
+// it absorbs the thumb's sub-pixel rendering (max residual 7.0px over vt
+// 0..4612 from 83 anchors, vs 14.9px for the geometric slope); the geometric
+// slope is both the fallback for a narrow anchor span AND the sanity gate that
+// a mis-detected column cannot pass.
+constexpr int    SB_MIN_CAL_POINTS  = 4;
+// Thumb travel the anchors must span before the slope is FITTED instead of
+// taken from geometry. A short baseline makes least squares worse than the
+// closed form, not better — measured on rw4's deep page by extrapolating to a
+// point 5300px beyond the calibrated range: 50px of travel errs +138px, 74px
+// errs +25px, 213px errs +10px, 355px errs +10px, while the geometric slope
+// alone errs −7..−34px regardless of travel. 200px is where the fit starts
+// beating the closed form.
+constexpr int    SB_MIN_CAL_SPREAD  = 200;
+constexpr double SB_SLOPE_TOL_FRAC  = 0.15; // fitted vs geometric slope; measured deviation ≤ 0.4%
+constexpr double SB_MAX_RESIDUAL_PX = 24.0; // measured max 7.0px (deep page), 1.4px (short page)
+// The slope itself is only known to about this fraction (measured
+// geometric-vs-fitted disagreement: 0.4% on rw4's deep page, 0.1% on its short
+// one), so extrapolating far past the calibrated range adds proportional error.
+// Declared, not corrected — an honest interval beats a false point estimate.
+constexpr double SB_SLOPE_ERR_FRAC  = 0.005;
+// Share of anchors the map may refuse before the map itself is refused. A map
+// describing the real bar of a real document explains nearly every anchor
+// (measured: 0 of 83, 0 of 55 and 0 of 329 rejected on rw4's two pages); a map
+// fitted to something that is not a scrollbar cannot explain its own inputs
+// (measured on the lab fling fixture's false-positive column: 192 of 214
+// rejected). Defence in depth behind the tracker's movement test.
+constexpr double SB_MAX_REJECT_FRAC = 0.25;
+constexpr int    SB_THUMB_H_TOL     = 2;    // document fingerprint match; measured 72 vs 576 (≫ tol)
+// A scrollbar-derived continuation is accepted only where content matching is
+// blind BY CONSTRUCTION: the predicted offset must leave the page's canvas less
+// overlap than the identifier needs to reach a verdict. Its verification grid
+// steps 48px and demands ≥12 textured blocks, which one block row of a
+// full-width interior already supplies — so ~64px of overlap is where content
+// evidence begins. Above that the identifier HAD evidence and said "no match",
+// and that verdict wins: contradictory evidence means the page changed, not
+// that the viewport jumped.
+constexpr long   SB_CONTINUATION_MAX_OVERLAP = 64;
 
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────
 constexpr int    IDENT_SAMPLES = 120;           // blocks sampled per candidate match
@@ -118,6 +197,15 @@ constexpr double IDENT_MATCH_MAD = 9.0;
 // revisit_noscroll sibling-page collision (0.34).
 constexpr double REVISIT_MIN_CONCENTRATION = 0.5;
 constexpr int    REVISIT_MIN_MATCH_BLOCKS  = 40;
+// A content match against the page the session was ALREADY on is not a revisit
+// — the session never left. It is a scroll jump too large for frame-to-frame
+// matching, re-localized against that page's own canvas. The two are separated
+// by how much of the frame is PIXEL-IDENTICAL to what the canvas already holds:
+// a jump re-shows literally the same pixels (measured on session_fling:
+// confidence 1.000 and 0.913), while a page that RELOADED repaints most of the
+// viewport (measured on rw1's auto-refreshing news portal: 0.317). Below the
+// bar the visit stays a REVISIT — a reload IS a new document version.
+constexpr double CONTINUATION_MIN_CONFIDENCE = 0.75;
 
 // One page visit: a contiguous, stable frame range showing a single page.
 // Frames between visits (navigation transitions) belong to no visit.

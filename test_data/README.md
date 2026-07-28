@@ -18,6 +18,7 @@ of every frame so the stitcher's output can be scored against known truth.
 | `stitch_test_results.jsonl` | Append-only history of benchmark runs — track `totalError` as the algorithm improves. |
 | `session_page1/` | Generated single-page dataset (frames + mp4 + ground truth) — the stitch benchmark session. |
 | `session_multipage/` | Generated multi-page dataset: page 1 → scroll → hovers → click → page 2 (Milestone-3 fixture). |
+| `session_fling/` | Generated single-page dataset with scroll LEAPS beyond the shared-pixel window — the intra-page re-localization fixture (M7). |
 
 Both pages have the same layout dimensions: **header 72px, footer 56px, left
 sidebar 240px, right sidebar 180px**, at a 1280×900 viewport. Every link on a
@@ -122,6 +123,35 @@ borderline case — run the tool with `-S normal` (one stitch) or `-S high`
 (a new stitch per bigger mutation, no revisit merging) to see both valid
 outcomes.
 
+### Intra-page re-localization (2026-07-27)
+
+```bash
+node record_session.mjs --plan fling                 # → session_fling/
+python3 frames_to_mp4.py session_fling
+```
+
+Scroll the whole document, then LEAP across it in a single frame — back to the
+top (−2353px), scroll down again, then leap to the bottom (+1647px). Each leap
+is beyond `MAX_SCROLL` **and** beyond the physical limit of frame-to-frame
+matching (`viewport − header − footer` ≈ 772px here), so the frames either side
+share **no pixels**: to anything looking at two frames, a leap is
+indistinguishable from a navigation. Both leaps land in territory the session
+has already seen, so the page's own stitched canvas is the evidence — this is
+the **content** path of re-localization.
+
+What must hold is the OUTCOME, not the classification: exactly **one page**,
+**zero navigation events**, and each leap present as one large **scroll event**.
+`PAGE_CHANGE` transitions are expected here, so `session_fling` is listed in
+`PAGECHANGE_EXPECTED` at the top of `test_stitch_session.py` — the guard becomes
+"no navigation events" instead. Baseline (2026-07-27): totalError 79px,
+`dyErrorSum` **1px**, `eventCountDiff` 0, 2 re-localized visits. Before
+re-localization the same recording scored `dyErrorSum` 4000px with two bogus
+REVISIT navigations, so the fixture genuinely fails without the feature.
+
+The **scrollbar** path cannot be exercised in the lab: CDP screenshots contain
+no scrollbar (verified — the right-edge modal value is page white in 100% of
+frames of all ten fixtures). `realworld/rw4_portal` is its only test.
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit
@@ -138,9 +168,21 @@ system (2021-01-18 portal dump; **webs elements only**), each with the
 production system's stitched screenshots as reference outputs
 (`production/*_orig.jpg`). The binaries are user data and are **not in git**
 — `realworld_manifest.json` (committed) defines the corpus with source paths,
-so the suite can be re-imported from the dump. Scoring is structural (runs,
-≥1 page, plausible geometry) plus a printed comparison against the production
-reference; `--all` includes these sessions.
+so the suite can be re-imported from the dump. `--all` includes these sessions.
+
+Scoring is structural (runs, ≥1 page, plausible geometry), a printed comparison
+against the production reference, **plus the per-case `expect` block in
+`realworld_manifest.json`**: an exact page count and a height window per page.
+Those are drift guards anchored on the measured baseline, not derived truth —
+they exist because the structural checks alone could not tell a page-for-page
+reconstruction from a fractured one (rw4 passed structurally while truncating
+its deep page to 48% and inventing a third page). Each `expect` carries a `note`
+saying what is enforced and what is only soft: production's page COUNT is not
+comparable where its sensitivity setting differs (rw5: 19 stitches vs our 5) or
+where it emits one stitch per visit rather than per distinct page (rw4), and a
+production stitch height is only a document height when the session actually
+reached the bottom (rw1 and rw3-page2 did not — their references are captured
+extents).
 
 | case | content | video | production ref |
 |------|---------|-------|----------------|

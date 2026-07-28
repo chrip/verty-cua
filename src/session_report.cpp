@@ -41,7 +41,11 @@ bool SessionReport::write(const std::string& path,
     const double fps = session.fps();
 
     out << "{\n";
-    out << "  \"schema\": 1,\n";
+    // schema 2 adds pages[].gaps (document rows no frame ever showed) and
+    // visits[].vtUncertaintyPx. A consumer of schema 1 was entitled to assume
+    // every pixel of a stitch was observed; once a re-localized jump can skip
+    // content, that is no longer true and the difference must be declarable.
+    out << "  \"schema\": 2,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -70,7 +74,9 @@ bool SessionReport::write(const std::string& path,
                 << ", \"lastFrame\": " << t.visit.lastFrame
                 << ", \"tEnter\": " << (t.visit.firstFrame / fps)
                 << ", \"tExit\": " << (t.visit.lastFrame / fps)
-                << ", \"vtStart\": " << t.vt_start << "}";
+                << ", \"vtStart\": " << t.vt_start
+                << ", \"vtUncertaintyPx\": " << t.vt_uncertainty
+                << ", \"relocalized\": " << (t.bridged ? "true" : "false") << "}";
         }
         out << "], \"fixedRects\": [";
         for (size_t k = 0; k < p.fixedRects.size(); ++k) {
@@ -88,6 +94,13 @@ bool SessionReport::write(const std::string& path,
                 << "{\"x\": " << r.x << ", \"y\": " << r.y << ", "
                 << "\"w\": " << r.width << ", \"h\": " << r.height << "}";
         }
+        // Document rows no frame ever showed — the stitch is blank there. A
+        // scroll jump skips content, and pixels never captured cannot be
+        // reconstructed; saying so is part of the contract.
+        out << "], \"gaps\": [";
+        for (size_t k = 0; k < p.gaps.size(); ++k)
+            out << (k ? ", " : "")
+                << "{\"from\": " << p.gaps[k].from << ", \"to\": " << p.gaps[k].to << "}";
         out << "]}" << (i + 1 < pages.size() ? "," : "") << "\n";
     }
     out << "  ],\n";

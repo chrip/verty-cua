@@ -18,13 +18,20 @@
 class PageRegistry {
 public:
     PageRegistry(std::string video_path, int frame_w, int frame_h, double fps,
-                 bool verbose, Sensitivity sensitivity = Sensitivity::Normal);
+                 bool verbose, Sensitivity sensitivity = Sensitivity::Normal,
+                 const ScrollbarTracker* scrollbar = nullptr);
 
     struct Assignment {
         int         pageId     = 0;
         long        vtStart    = 0;
         double      confidence = 0.0;    // 0 for the first visit / new pages
         std::string navType;             // "NAVIGATE" | "REVISIT" ("" for visit 0)
+        // True when the visit is a CONTINUATION of the page it followed, entered
+        // by a scroll jump too large for frame-to-frame matching. It is not a
+        // navigation at all, so it produces no navigation event — the jump is
+        // reported as one large scroll event instead.
+        bool        continuation = false;
+        long        vtUncertainty = 0;   // declared error of vtStart (px)
     };
 
     // Identify the visit (by its first stable frame), fold it into the right
@@ -48,9 +55,17 @@ private:
     bool        verbose_;
     Sensitivity sensitivity_;
 
+    const ScrollbarTracker* scrollbar_ = nullptr;   // session-wide, not owned
     PageIdentifier          identifier_;
     std::vector<PageRecord> records_;
+    int                     last_page_ = -1;        // page of the previous visit
 
     // The scroll area of a page within the viewport (inside its fixed bands).
     [[nodiscard]] cv::Rect interior_of(const PageRecord& rec) const;
+
+    // Intra-page re-localization: is this frame the page we were already on,
+    // seen at a document offset its canvas does not cover yet? Fills vt/
+    // uncertainty and returns true if so. See the implementation for the guards.
+    [[nodiscard]] bool continues_last_page(const cv::Mat& first_frame_gray,
+                                           long& vt, long& uncertainty) const;
 };

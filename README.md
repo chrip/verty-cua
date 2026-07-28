@@ -7,17 +7,20 @@ page scrolled in each frame and which parts of the screen are fixed chrome
 tall image with the fixed elements stamped in place.
 
 > ### Status: work in progress (proof of concept)
-> **Milestones 1–6 are done** (see `ROADMAP.md`): multi-page sessions with
-> page-change detection, REVISIT recognition (a returning page merges into its
-> existing stitch at the recovered scroll offset), scroll events with
-> timestamps, anti-ghosting for animated regions and floating fixed overlays,
-> and a machine-readable session report (`-r`, schema v1). All measured by a
-> reproducible browser-based benchmark (`test_data/`, four recorded sessions,
-> one command scores everything).
+> **Milestones 1–6 are done and M7 (real-world hardening) is well along** (see
+> `ROADMAP.md`): multi-page sessions with page-change detection, REVISIT
+> recognition (a returning page merges into its existing stitch at the recovered
+> scroll offset), **intra-page re-localization of scroll jumps too large for
+> frame-to-frame matching** (flings, Page-Down chains, scrollbar-thumb drags),
+> scroll events with timestamps, anti-ghosting for animated regions and floating
+> fixed overlays, persistent-noise handling for fixed-position video ads, and a
+> machine-readable session report (`-r`, schema v2). All measured by a
+> reproducible benchmark: ten recorded lab sessions plus five real production
+> screencasts, scored by one command.
 >
 > Still a prototype: fixed-band edges carry a declared uncertainty (bands only
-> over-detect, harmlessly), and everything is tuned on lab recordings —
-> **next: real-world screencasts (M7)**.
+> over-detect, harmlessly), and document regions a jump skipped were never on
+> screen — they stay blank and are declared in the report rather than invented.
 
 ## How it works
 
@@ -30,8 +33,24 @@ visit is then assigned to a page by the `PageRegistry`: a visit whose first
 frame matches a known page's canvas (block voting, `PageIdentifier`) is a
 **REVISIT** — it merges into that page's existing stitch at the recovered
 entry scroll offset (browsers restore scroll on back-navigation, so revisits
-may enter mid-document); otherwise it starts a new page. Each page is
-reconstructed by its `PageStitcher` in three passes per visit:
+may enter mid-document); otherwise it starts a new page.
+
+A third possibility exists because scroll tracking is a chain of frame-to-frame
+deltas, and the chain breaks when one step is larger than the shared-pixel
+window (`viewport − header − footer`). Past that, two consecutive frames have
+nothing in common, and a fling — or a drag of the scrollbar thumb — looks
+exactly like a navigation. Such a visit is **re-localized** back into the page
+it continues: by content where the jump landed in territory the canvas already
+covers, and otherwise from the **vertical scrollbar**, whose thumb position
+gives the absolute offset and whose thumb height fingerprints the document.
+The map from thumb position to document offset is calibrated from the page's own
+content-tracked scrolls, so no platform scrollbar metrics are assumed. A
+re-localized jump is reported as one large *scroll event* inside one page — not
+as a navigation — and any document rows the jump skipped are left blank and
+listed in the report's `gaps`, because pixels that were never captured cannot be
+reconstructed.
+
+Each page is reconstructed by its `PageStitcher` in three passes per visit:
 
 1. **analyze** — accumulate the position-fixed pixel mask and a rough per-frame
    scroll offset; reduce the mask to header / footer / left / right fixed-band
@@ -73,10 +92,12 @@ This produces `./build/verty`.
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON): pages (stitch file, geometry,
-  visit frame range, fixed-element rectangles), navigation events, scroll
-  events with timestamps (`{t, frame, pageId, dy, vt}`), and a tally of
-  transition types (identical / scroll / pageChange / unstable).
+- `-r` — optional **session report** (JSON, `"schema": 2`): pages (stitch file,
+  geometry, visit frame ranges with their entry offset + declared uncertainty +
+  a `relocalized` flag, fixed-element rectangles, interior overlays, and `gaps`
+  — document rows no frame ever showed), navigation events, scroll events with
+  timestamps (`{t, frame, pageId, dy, vt}`), and a tally of transition types
+  (identical / scroll / pageChange / unstable).
 
 ## Run the benchmark — from `git clone` to results
 
@@ -119,8 +140,9 @@ benchmark is scored.
 
 ```
 src/            the tool — SessionProcessor → SessionSegmenter → PageRegistry
-                (PageIdentifier) → PageStitcher; TransitionClassifier,
-                ScrollDetector, FixedAccumulator, VideoSource, SessionReport
+                (PageIdentifier, ScrollbarTracker + ScrollbarMap) →
+                PageStitcher; TransitionClassifier, ScrollDetector,
+                FixedAccumulator, VideoSource, SessionReport
 test_data/      HTML fixtures, session recorder, mp4 muxer, benchmark + results log
 CMakeLists.txt
 ```

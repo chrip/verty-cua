@@ -2,7 +2,9 @@
 #include "types.hpp"
 #include "fixed_accumulator.hpp"
 #include "page_registry.hpp"
+#include "scrollbar_tracker.hpp"
 #include "session_segmenter.hpp"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,7 @@ public:
         std::vector<cv::Rect>    overlays;                // interior fixed elements
         std::vector<ScrollEvent> scrollEvents;            // global frames / timestamps
         std::vector<PageStitcher::VisitTrace> visits;     // all visits of this page
+        std::vector<PageStitcher::Gap> gaps;              // never-observed doc rows
     };
 
     // One navigation between visits.
@@ -76,6 +79,11 @@ private:
         const cv::Mat& seed_noise = cv::Mat());
 
     cv::Mat noise_mask_;   // matured persistent-noise mask (last classify pass)
+
+    // The session's vertical scrollbar, located during the classification pass.
+    // Absolute-offset evidence for jumps no content matching can follow; shared
+    // (unowned) with the registry and every page stitcher.
+    std::unique_ptr<ScrollbarTracker> scrollbar_;
 
     // The visit's first stable frame, grayscale (for page identification).
     [[nodiscard]] cv::Mat read_frame_gray(long index) const;

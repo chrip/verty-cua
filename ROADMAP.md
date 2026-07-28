@@ -106,8 +106,13 @@ main.cpp
       ├── TransitionClassifier   IDENTICAL | SCROLL(dy) | PAGE_CHANGE |
       │                          UNSTABLE (loading/animation)            (M2)
       ├── SessionSegmenter       transitions → page-visit segments       (M3)
-      ├── PageRegistry           page fingerprints, identity             (M4)
-      │    └── PageIdentifier    frame ↔ known-page matching             (M4)
+      ├── PageRegistry           page fingerprints, identity, intra-page
+      │                          re-localization of large jumps       (M4/M7)
+      │    ├── PageIdentifier    frame ↔ known-page matching             (M4)
+      │    └── ScrollbarTracker  reads the vertical scrollbar; with
+      │         + ScrollbarMap   a per-page thumb→offset calibration,
+      │                          the absolute offset of a frame whose
+      │                          delta chain broke                      (M7)
       ├── PageStitcher           today's Stitcher, scoped to a segment,
       │                          mergeable across visits                 (M3/M4)
       │    └── ScrollDetector    (exists; mask-aware)
@@ -490,9 +495,99 @@ Corpus scores after this pass: rw3 is a page-for-page match with the DOM
 production output (6524/956/4327 vs 6520/960/4320); rw2 within 4px; rw5
 per-page heights within 8px. **Remaining backlog:** rw4's very deep page is
 still truncated (5542 vs 11624 — fling steps beyond the overlap limit; needs
-registry-level intra-page re-localization), rw1's article stitch reaches 86%
-of the reference, and rw5 splits fewer steps than production's high-
-sensitivity setting (soft comparison).
+registry-level intra-page re-localization), and rw5 splits fewer steps than
+production's high-sensitivity setting (soft comparison).
+
+*(Correction, 2026-07-27: an earlier draft of this paragraph also claimed
+"rw1's article stitch reaches 86% of the reference". That number was left over
+from before the reload-REVISIT fix in this same section — after it, rw1 is a
+single 4735px page against a 4737px production JPG. The 4744 in the manifest,
+and rw1's reference generally, is a CAPTURED EXTENT rather than a document
+height: the scrollbar thumb puts that document at ~13000px and the user never
+scrolled that far.)*
+
+### Intra-page re-localization — 2026-07-27
+
+**The problem.** Scroll tracking is a chain of frame-to-frame deltas, and the
+chain breaks when one step exceeds the shared-pixel window
+(`viewport − header − footer`). Past that, two consecutive frames have NOTHING
+in common and no frame-pair method can measure the jump — to a classifier
+seeing two frames, a jump is indistinguishable from a navigation. Measured on
+rw4_portal, whose deep page the user scrolled by **dragging the scrollbar
+thumb** (4356px in one 3.89fps frame step): the page fractured into a truncated
+5542px stitch plus a bogus second page, and the identifier scored the fragment
+`confidence 0 conc 0 blocks 0` — literally zero overlap to match against.
+
+**Two evidence sources, tried in that order.** A visit that matches no page is
+now tested for being a CONTINUATION of the page the session was already on:
+
+- **Content** — the jump landed in territory the page's canvas already covers,
+  so the frame matches it outright. A match against the *previous* page with
+  `confidence ≥ CONTINUATION_MIN_CONFIDENCE` is a jump, not a revisit: a jump
+  re-shows literally the same pixels (measured 1.000 and 0.913 on the new
+  fixture, 0.885 on rw3), while a page that RELOADED in place repaints most of
+  the viewport (measured 0.317 on rw1's auto-refreshing news portal, which must
+  stay a REVISIT — a reload is a new document version).
+- **Scrollbar** — where the jump lands beyond the canvas there is no content to
+  match, by construction, and the browser's own scrollbar is the only pixel
+  signal left. `ScrollbarTracker` locates the bar structurally (a column band
+  holding two gray levels whose darker run MOVES) and `ScrollbarMap` calibrates
+  `vt = a·thumb_top + b` from the page's **own content-tracked scrolls** — so
+  nothing about platform scrollbar metrics is assumed. The slope has a closed
+  form, `a = viewport_h / thumb_h`, which doubles as the sanity gate a
+  mis-detected column cannot pass. Measured on rw4: 83 anchors, max residual
+  7.0px over vt 0..4612; R² 0.99999; the implied track top is 16.6 against a
+  true 17.
+
+**Thumb height is the page fingerprint.** It is a function of document height
+alone, so it survives a zero-overlap jump — the one identity signal that does
+(measured on rw4: 72px for the 11624px page vs 576px for the 1449px one, an
+8.02:1 ratio against the documents' 8.02:1).
+
+**Guards** (a false merge is the worst outcome this project can produce, so
+each is measured): only the immediately preceding page may be continued; the
+scrollbar map must be calibrated from that page's own scrolls and its thumb
+fingerprint must match; and a scrollbar-derived offset is accepted **only where
+content matching is blind by construction** — beyond the canvas, leaving less
+overlap than the identifier needs to form a verdict. Inside the canvas the
+identifier had evidence and said no, and that verdict wins.
+
+**The contract holds.** A re-localized jump is reported as one large SCROLL
+event inside ONE page — because that is what it was — and emits no navigation.
+Report schema bumped 1 → 2 for `pages[].gaps` (document rows no frame ever
+showed) and `visits[].vtUncertaintyPx` / `relocalized`: a jump SKIPS content,
+pixels never captured cannot be reconstructed, and a schema-1 consumer was
+entitled to assume every pixel of a stitch had been observed.
+
+**Measured.** rw4: 3 pages → **2**; deep page 5542 → **11618** vs the DOM
+system's 11624 (−6px), with the fragment landing within **+5px** of where the
+DOM-based system placed it (verified by aligning both against the production
+stitch) and 4446px declared unseen. rw3: the −4563px jump that was reported as
+a bogus REVISIT is now a scroll event; 4 navigations → 3, geometry unchanged.
+New fixture `--plan fling` (leaps of −2353px and +1647px into already-seen
+territory): 1 page, 0 navigations, `dyErrorSum` **4000px → 1px**,
+`eventCountDiff` 2 → 0. rw1, rw2, rw5 and all nine lab fixtures byte-identical.
+
+**Deliberate non-decisions** (measured; do not re-litigate):
+- The frames the segmenter drops in its page-change window are NOT recovered,
+  though the map could place them. They are captured DURING the jump and are
+  **torn**: localizing rw4's frame 150 band by band inside the DOM reference
+  puts rows 60..149 at offset 5571 and rows 510..899 at 6983. Stitching such a
+  frame would bake a torn band into the canvas; one dropped viewport is cheaper.
+- The scrollbar path **cannot be exercised in the lab** — CDP screenshots carry
+  no scrollbar (verified across all nine fixtures, whose right-edge modal value
+  is page white in 100% of frames). rw4_portal is its only test. The fixture
+  covers the content path instead.
+- The slope is FITTED only when the anchors span ≥ `SB_MIN_CAL_SPREAD` of thumb
+  travel, because a short baseline makes least squares worse than the closed
+  form: extrapolating 5300px beyond the calibrated range errs +138px from 50px
+  of travel, +25px from 74px, +10px from 213px, while the geometric slope alone
+  errs −7..−34px regardless.
+- Never score a scrollbar-derived docHeight against a production stitch unless
+  the session reached the document bottom: rw1's and rw3-page2's references are
+  captured extents, not document heights (the thumb puts those documents at
+  ~13000 and ~4960px, and the scrollbar-predicted captured extents match the
+  production JPGs to 1-2px).
 
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
@@ -503,9 +598,11 @@ everything the corpus has surfaced that isn't fixed yet.
   frame-varying dy — verify histogram voting copes; consider ±0.5 px vote
   smearing; watch cumulative drift (frame-vs-own-canvas re-localization via
   the M4 matcher is the mitigation).
-- **Large jumps** (Page-Down, anchor links, `|dy| ≥ MAX_SCROLL`): currently
+- ~~**Large jumps** (Page-Down, anchor links, `|dy| ≥ MAX_SCROLL`): currently
   rejected → would be misread as a page change; instead re-localize within the
-  page using the M4 frame-vs-canvas matcher.
+  page using the M4 frame-vs-canvas matcher.~~ **Done 2026-07-27** — see
+  *Intra-page re-localization* above (content evidence where the jump lands in
+  seen territory, scrollbar evidence where it does not).
 - Variable fps / dropped frames, stronger compression, DPI/zoom changes,
   browser UI at the top of the recording (crop detection).
 

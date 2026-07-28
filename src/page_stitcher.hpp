@@ -1,6 +1,8 @@
 #pragma once
 #include "types.hpp"
 #include "fixed_accumulator.hpp"
+#include "scrollbar_map.hpp"
+#include "scrollbar_tracker.hpp"
 #include "transition_classifier.hpp"
 #include "video_source.hpp"
 #include <string>
@@ -43,11 +45,22 @@ struct ScrollEvent {
 // the full document height).
 class PageStitcher {
 public:
+    // scrollbar: located vertical scrollbar of the session, or nullptr. Used to
+    // calibrate this page's thumb→offset map, which lets a later visit be
+    // re-localized after a jump that content matching cannot follow.
     PageStitcher(std::string video_path, int frame_w, int frame_h, double fps,
-                 bool verbose = false, int page_id = 0);
+                 bool verbose = false, int page_id = 0,
+                 const ScrollbarTracker* scrollbar = nullptr);
 
     // Analyze one visit of this page (runs both analysis passes).
-    void add_visit(const PageVisit& visit, long vt_start);
+    //
+    // bridged marks a visit that CONTINUES the previous one after a jump too
+    // large for frame-to-frame matching: it emits the jump as one large scroll
+    // event, because that is what it was. vt_uncertainty is the declared error
+    // of vt_start (0 when the offset came from content, non-zero when it was
+    // re-localized from the scrollbar).
+    void add_visit(const PageVisit& visit, long vt_start,
+                   bool bridged = false, long vt_uncertainty = 0);
 
     // Merge all visits into the page canvas (callable after every add_visit).
     [[nodiscard]] cv::Mat reconstruct();
@@ -56,7 +69,18 @@ public:
     struct VisitTrace {
         PageVisit         visit;
         long              vt_start = 0;
+        long              vt_uncertainty = 0;   // declared error of vt_start (px)
+        bool              bridged  = false;     // entered by a re-localized jump
         std::vector<long> vt_by_frame;   // absolute doc coords per LOCAL index
+    };
+
+    // A document row range no frame ever showed. A jump skips content, and the
+    // skipped rows CANNOT be reconstructed from pixels that were never
+    // captured — so they are left blank and declared here rather than being
+    // silently passed off as page content.
+    struct Gap {
+        long from = 0;   // inclusive
+        long to   = 0;   // exclusive
     };
 
     [[nodiscard]] const std::vector<VisitTrace>&  visits() const { return visits_; }
@@ -67,6 +91,10 @@ public:
     // Confirmed persistent-noise mask (fixed video ads), viewport coords.
     [[nodiscard]] const cv::Mat& noise_mask() const { return noise_mask_; }
     [[nodiscard]] long doc_height() const { return max_vt_ + frame_h_; }
+    // Document rows never observed (valid after reconstruct()).
+    [[nodiscard]] const std::vector<Gap>& gaps() const { return gaps_; }
+    // This page's calibrated scrollbar map (invalid if never calibrated).
+    [[nodiscard]] const ScrollbarMap& scrollbar_map() const { return sb_map_; }
 
 private:
     std::string video_path_;
@@ -79,6 +107,9 @@ private:
     TransitionClassifier classifier_;
     FixedAccumulator     accumulator_;           // chrome evidence, all visits
     DynamicAccumulator   noise_accumulator_;     // persistent-noise evidence
+    const ScrollbarTracker* scrollbar_ = nullptr;   // session-wide, not owned
+    ScrollbarMap         sb_map_;                // this page's thumb→offset map
+    std::vector<Gap>     gaps_;                  // never-observed document rows
     std::vector<VisitTrace> visits_;
     long max_vt_ = 0;                    // deepest viewport top over all visits
     long min_vt_ = -1;                   // shallowest (-1 = none yet)
@@ -97,7 +128,8 @@ private:
     [[nodiscard]] VideoSource open_at(const PageVisit& v) const;
 
     void analyze_visit(const PageVisit& v, long vt_start);   // pass 1
-    void refine_visit(const PageVisit& v, long vt_start);    // pass 2
+    void refine_visit(const PageVisit& v, long vt_start,     // pass 2
+                      bool bridged, long vt_uncertainty);
 
     void extract_rects();
     void extract_overlays();

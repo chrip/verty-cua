@@ -14,6 +14,8 @@ add_executable(verty
     src/page_identifier.cpp
     src/page_registry.cpp
     src/page_stitcher.cpp
+    src/scrollbar_map.cpp
+    src/scrollbar_tracker.cpp
     src/session_segmenter.cpp
     src/session_processor.cpp
     src/transition_classifier.cpp
