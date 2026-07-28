@@ -48,7 +48,9 @@ content-tracked scrolls, so no platform scrollbar metrics are assumed. A
 re-localized jump is reported as one large *scroll event* inside one page — not
 as a navigation — and any document rows the jump skipped are left blank and
 listed in the report's `gaps`, because pixels that were never captured cannot be
-reconstructed.
+reconstructed. (`gaps` also covers rows a viewport-fixed element hid at every
+reachable scroll offset — a full-width sticky nav bar permanently conceals the
+document rows beneath it.)
 
 Each page is reconstructed by its `PageStitcher` in three passes per visit:
 
@@ -59,7 +61,10 @@ Each page is reconstructed by its `PageStitcher` in three passes per visit:
    areas from the search so only genuine scrolling content votes.
 3. **reconstruct** — copy each frame's scrolling interior into a tall canvas at
    its scroll offset, then stamp the fixed bands on top: header at the top,
-   footer at the bottom, sidebars spanning the full height.
+   footer at the bottom, sidebars spanning the full height. The browser's
+   scrollbar is chrome, not content: its column is excluded from the interior
+   and painted from a thumb-free strip, because the thumb's position means
+   nothing in document coordinates.
 
 A multi-page session yields one stitched PNG per page (`out_page0.png`, …);
 a single-page session writes exactly the `-o` path.
@@ -95,9 +100,9 @@ This produces `./build/verty`.
 - `-r` — optional **session report** (JSON, `"schema": 2`): pages (stitch file,
   geometry, visit frame ranges with their entry offset + declared uncertainty +
   a `relocalized` flag, fixed-element rectangles, interior overlays, and `gaps`
-  — document rows no frame ever showed), navigation events, scroll events with
-  timestamps (`{t, frame, pageId, dy, vt}`), and a tally of transition types
-  (identical / scroll / pageChange / unstable).
+  — document rows for which no scrolling content was ever observed), navigation
+  events, scroll events with timestamps (`{t, frame, pageId, dy, vt}`), and a
+  tally of transition types (identical / scroll / pageChange / unstable).
 
 ## Run the benchmark — from `git clone` to results
 

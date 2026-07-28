@@ -8,8 +8,10 @@
 #include <string>
 #include <vector>
 
-// How a fixed region is anchored in the viewport.
-enum class FixedKind { Header, Footer, Left, Right };
+// How a fixed region is anchored in the viewport. Scrollbar is the browser's
+// own vertical bar — viewport chrome rather than page content, and detected
+// outright rather than inferred from pixel stability, so its extent is exact.
+enum class FixedKind { Header, Footer, Left, Right, Scrollbar };
 
 struct FixedRect {
     cv::Rect  rect;   // bounding box in viewport coordinates
@@ -74,10 +76,14 @@ public:
         std::vector<long> vt_by_frame;   // absolute doc coords per LOCAL index
     };
 
-    // A document row range no frame ever showed. A jump skips content, and the
-    // skipped rows CANNOT be reconstructed from pixels that were never
-    // captured — so they are left blank and declared here rather than being
-    // silently passed off as page content.
+    // A document row range for which NO SCROLLING CONTENT was ever observed,
+    // and which therefore cannot be reconstructed at all. Two causes, both
+    // permanent: a jump skipped the rows outright (they are blank in the
+    // stitch), or a viewport-fixed element covered them at every offset the
+    // page can be scrolled to — a full-width sticky nav hides the document
+    // rows under it forever, and the stitch shows the stamped element there
+    // instead of page content. Declared rather than silently passed off as
+    // reconstructed content.
     struct Gap {
         long from = 0;   // inclusive
         long to   = 0;   // exclusive
@@ -119,6 +125,8 @@ private:
     cv::Mat noise_mask_;       // confirmed persistent noise (video ads)
     cv::Mat first_frame_;      // frame at the shallowest vt — source for header/sidebars
     cv::Mat last_frame_;       // frame at the deepest vt    — source for the footer
+    int     sb_w_ = 0;         // scrollbar columns at the right edge (0 = none)
+    cv::Mat sb_clean_;         // thumb-free scrollbar strip (per-pixel max, all visits)
 
     std::vector<FixedRect> rects_;
     std::vector<cv::Rect>  overlays_;
@@ -136,4 +144,5 @@ private:
     void add_overlay(const cv::Rect& o);   // merge into the page-wide overlay list
     void append_scroll_events(const VisitTrace& trace);
     void stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const;
+    void stamp_scrollbar(cv::Mat& canvas, long doc_h) const;
 };

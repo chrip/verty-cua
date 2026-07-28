@@ -15,6 +15,14 @@ PageStitcher::PageStitcher(std::string video_path, int frame_w, int frame_h,
       sb_map_(frame_h)
 {
     fixed_mask_ = cv::Mat::zeros(frame_h_, frame_w_, CV_8UC1);
+
+    // Everything from the located band to the right edge is scrollbar: the one
+    // or two columns the band stops short of are its own anti-aliased outline
+    // (SB_EDGE_SLACK), not page content.
+    if (scrollbar_ && scrollbar_->located()) {
+        const int w = frame_w_ - scrollbar_->band().x;
+        if (w > 0 && w <= SB_MAX_WIDTH + SB_EDGE_SLACK) sb_w_ = w;
+    }
 }
 
 VideoSource PageStitcher::open_at(const PageVisit& v) const
@@ -128,7 +136,19 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start,
     auto calibrate = [&](const cv::Mat& gray, long v) {
         if (scrollbar_ && scrollbar_->located()) sb_map_.add(scrollbar_->read(gray), v);
     };
+    // Thumb-free scrollbar strip, accumulated as the per-pixel MAXIMUM over
+    // every frame of every visit: the thumb is darker than its track and moves
+    // on, so the maximum at any row is the track, while the arrow glyphs never
+    // move and survive. Used to paint the column, which is excluded from the
+    // stitched interior (see stamp_scrollbar).
+    auto accumulate_bar = [&](const cv::Mat& bgr) {
+        if (sb_w_ <= 0) return;
+        const cv::Mat strip = bgr(cv::Rect(frame_w_ - sb_w_, 0, sb_w_, frame_h_));
+        if (sb_clean_.empty()) strip.copyTo(sb_clean_);
+        else                   cv::max(sb_clean_, strip, sb_clean_);
+    };
     calibrate(curr_gray, vt);
+    accumulate_bar(f.bgr);
 
     while (video.next(f) && f.index <= visit.lastFrame) {
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
@@ -141,6 +161,7 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start,
         trace.vt_by_frame.push_back(vt);
         track_extremes(vt, f.bgr);
         calibrate(curr_gray, vt);
+        accumulate_bar(f.bgr);
         prev_gray = curr_gray.clone();
     }
 
@@ -212,6 +233,15 @@ void PageStitcher::extract_rects()
     left_w_   = 0; for (int x = 0; x < W; ++x)              { if (col_all_fixed(x)) ++left_w_;   else break; }
     right_w_  = 0; for (int x = W - 1; x >= left_w_; --x)   { if (col_all_fixed(x)) ++right_w_;  else break; }
 
+    // The browser's own scrollbar. Note that a genuine fixed right SIDEBAR can
+    // no longer be found when a scrollbar is present: right_w_ counts contiguous
+    // fully-fixed columns inward from the edge, and the bar's moving thumb stops
+    // that scan at the first column. Left as an observation rather than fixed —
+    // no session in the corpus has both, so there is nothing to measure a fix
+    // against (tests-before-algorithms).
+    if (sb_w_ > 0)
+        rects_.push_back({ cv::Rect(W - sb_w_, 0, sb_w_, H), FixedKind::Scrollbar });
+
     const int mid_h = H - header_h_ - footer_h_;
     if (header_h_ > 0)             rects_.push_back({ cv::Rect(0, 0, W, header_h_),                     FixedKind::Header });
     if (footer_h_ > 0)             rects_.push_back({ cv::Rect(0, H - footer_h_, W, footer_h_),         FixedKind::Footer });
@@ -250,6 +280,7 @@ void PageStitcher::extract_overlays()
     if (footer_h_ > 0) rem(cv::Rect(0, H - footer_h_, W, footer_h_)).setTo(0);
     if (left_w_  > 0)  rem(cv::Rect(0, 0, left_w_, H)).setTo(0);
     if (right_w_ > 0)  rem(cv::Rect(W - right_w_, 0, right_w_, H)).setTo(0);
+    if (sb_w_    > 0)  rem(cv::Rect(W - sb_w_, 0, sb_w_, H)).setTo(0);   // chrome
 
     cv::morphologyEx(rem, rem, cv::MORPH_OPEN,
                      cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
@@ -320,6 +351,7 @@ void PageStitcher::extract_overlays()
         if (footer_h_ > 0) nm(cv::Rect(0, H - footer_h_, W, footer_h_)).setTo(0);
         if (left_w_  > 0)  nm(cv::Rect(0, 0, left_w_, H)).setTo(0);
         if (right_w_ > 0)  nm(cv::Rect(W - right_w_, 0, right_w_, H)).setTo(0);
+        if (sb_w_    > 0)  nm(cv::Rect(W - sb_w_, 0, sb_w_, H)).setTo(0);
         cv::morphologyEx(nm, nm, cv::MORPH_OPEN,
                          cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
         if (cv::countNonZero(nm) >= OVERLAY_MIN_AREA) {
@@ -364,8 +396,25 @@ void PageStitcher::extract_overlays()
     if (a.empty() || b2.empty()) return;
 
     for (const cv::Rect& b : candidates) {
-        const double mad = cv::norm(a(b), b2(b), cv::NORM_L1) / (3.0 * b.area());
-        if (mad >= SAD_THRESHOLD) continue;   // content moved: not an overlay
+        // Compare the element's OWN pixels — the confirmed-fixed ones inside its
+        // box — not the whole box. A round element in a square box has
+        // background corners (~21% of the area for a disc), and by construction
+        // the two frames show DIFFERENT content behind it, so those corners
+        // alone can sink a genuine overlay: measured on rw3, the blue
+        // chat-launcher disc beside the "Haben Sie Fragen?" pill scored MAD 42
+        // against a threshold of 18 purely from its corners. It was rejected and
+        // stayed baked into the scroll content at every position it was seen.
+        const cv::Mat m = fixed_mask_(b);
+        const int n = cv::countNonZero(m);
+        if (n <= 0) continue;
+        const double mad = cv::norm(a(b), b2(b), cv::NORM_L1, m) / (3.0 * n);
+        if (mad >= SAD_THRESHOLD) {           // content moved: not an overlay
+            if (verbose_)
+                std::cout << "[page " << page_id_ << " overlay rejected] "
+                          << b.width << "×" << b.height << " at viewport ("
+                          << b.x << "," << b.y << ")  verifyMAD=" << mad << "\n";
+            continue;
+        }
         add_overlay(b);
         if (verbose_)
             std::cout << "[page " << page_id_ << " overlay] "
@@ -447,8 +496,13 @@ cv::Mat PageStitcher::reconstruct()
     // stamp to cover the margin (a no-scroll visit would get blank edge rows).
     const int top_m = header_h_ > 0 ? INTERIOR_ROW_MARGIN : 0;
     const int bot_m = footer_h_ > 0 ? INTERIOR_ROW_MARGIN : 0;
+    // The scrollbar columns are excluded from the scrolling interior and painted
+    // separately: the thumb moves with the scroll position, so that column is not
+    // document content at any offset. Measured on rw4's deep page before this:
+    // 92% of the column ended up blank white (an overlay bbox covered it, so the
+    // blank-fill pass could never recover it) with 120 rows of thumb remnants.
     const cv::Rect interior(left_w_, header_h_ + top_m,
-                            frame_w_ - left_w_ - right_w_,
+                            frame_w_ - left_w_ - right_w_ - sb_w_,
                             frame_h_ - header_h_ - footer_h_ - top_m - bot_m);
     if (interior.width <= 0 || interior.height <= 0) return canvas;
 
@@ -571,13 +625,16 @@ cv::Mat PageStitcher::reconstruct()
         }
     }
 
-    // ── Never-observed rows ──────────────────────────────────────────────────
-    // A jump beyond the shared-pixel window skips document content outright: no
-    // frame ever showed those rows, so nothing can recover them. They stay blank
-    // and are DECLARED (report `gaps`) rather than presented as page content —
-    // the same honesty rule as the fixed bands' uncertainty. Only the scrolling
-    // span is examined: the rows above/below it belong to the header and footer
-    // stamps, which cover them by construction.
+    // ── Rows with no observed scrolling content ──────────────────────────────
+    // Two permanent causes, both DECLARED (report `gaps`) rather than presented
+    // as reconstructed page content — the same honesty rule as the fixed bands'
+    // uncertainty. (1) A jump beyond the shared-pixel window skipped the rows
+    // outright; nothing can recover pixels never captured, and they stay blank.
+    // (2) A viewport-fixed element covered them at every reachable offset — a
+    // full-width sticky nav hides the document rows beneath it forever (measured
+    // on rw3: doc rows 72..175) — and the stitch shows the stamped element there.
+    // Only the scrolling span is examined: the rows above/below it belong to the
+    // header and footer stamps, which cover them by construction.
     gaps_.clear();
     {
         const long content_top = interior.y;
@@ -621,5 +678,37 @@ cv::Mat PageStitcher::reconstruct()
         src_frame(o).copyTo(canvas(cv::Rect(o.x, dst_y, o.width, o.height)));
     }
 
+    // Last, so the bar wins wherever an overlay bbox reached the edge — which is
+    // also what the viewport showed.
+    stamp_scrollbar(canvas, doc_h);
+
     return canvas;
+}
+
+// ── stamp_scrollbar ───────────────────────────────────────────────────────────
+// The vertical scrollbar is viewport CHROME, not document content: its track and
+// arrow buttons are position-fixed, and its thumb encodes the scroll position,
+// which is meaningless in document coordinates — the same reason the recorder
+// hides position:fixed elements for its full-page reference render. So the
+// column is painted from the thumb-free strip: arrows at both document ends
+// (like the header and footer bands) with clean track in between.
+//
+// Known degradation: on a page that barely scrolled the thumb may never vacate
+// some rows, and those rows keep it. Harmless — a thumb filling most of its
+// track is what such a page actually showed.
+void PageStitcher::stamp_scrollbar(cv::Mat& canvas, long doc_h) const
+{
+    if (sb_w_ <= 0 || sb_clean_.empty() || doc_h < frame_h_) return;
+    const int x    = frame_w_ - sb_w_;
+    const int half = frame_h_ / 2;
+    if (half <= 0 || half >= frame_h_) return;
+
+    cv::Mat track;   // a mid-track row: guaranteed thumb-free after the maximum
+    cv::repeat(sb_clean_.row(half), static_cast<int>(doc_h), 1, track);
+    track.copyTo(canvas(cv::Rect(x, 0, sb_w_, static_cast<int>(doc_h))));
+
+    sb_clean_.rowRange(0, half).copyTo(canvas(cv::Rect(x, 0, sb_w_, half)));
+    const int tail = frame_h_ - half;
+    sb_clean_.rowRange(half, frame_h_)
+        .copyTo(canvas(cv::Rect(x, static_cast<int>(doc_h) - tail, sb_w_, tail)));
 }

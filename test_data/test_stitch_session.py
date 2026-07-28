@@ -450,8 +450,9 @@ def print_realworld(checks, production, report):
     gaps = [(i, g) for i, p in enumerate(report.get("pages", [])) for g in p.get("gaps", [])]
     if gaps:
         total = sum(g["to"] - g["from"] for _, g in gaps)
-        print(f"  never observed:       {total}px over {len(gaps)} range(s) "
-              f"{[(i, g['from'], g['to']) for i, g in gaps]} — skipped by a jump, left blank")
+        print(f"  no scrolling content: {total}px over {len(gaps)} range(s) "
+              f"{[(i, g['from'], g['to']) for i, g in gaps]} — skipped by a jump "
+              f"(blank), or hidden by a viewport-fixed element at every offset")
 
 
 import glob

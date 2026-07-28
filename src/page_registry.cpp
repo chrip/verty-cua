@@ -71,6 +71,17 @@ cv::Rect PageRegistry::interior_of(const PageRecord& rec) const
         case FixedKind::Footer: footer = fr.rect.height; break;
         case FixedKind::Left:   left   = fr.rect.width;  break;
         case FixedKind::Right:  right  = fr.rect.width;  break;
+        // The scrollbar is deliberately NOT excluded here, even though its thumb
+        // tracks the scroll position and so says nothing about WHICH page this
+        // is. Excluding it narrows this rect, which reshuffles the identifier's
+        // deterministic block sampling, which moves confidence and concentration
+        // by a few percent — and rw5_mobileframe sits on a knife edge:
+        // concentration 0.46-0.474 against REVISIT_MIN_CONCENTRATION = 0.5 on
+        // three visits. Excluding 15 of 1918 columns tipped one of them and cost
+        // a duplicate page (5 -> 6). The exclusion is principled but its benefit
+        // is unmeasurable; the regression was measured, so the geometry stays.
+        // The real issue is the sample-dependence itself — see ROADMAP.md.
+        case FixedKind::Scrollbar: break;
         }
     }
     return {left, header, frame_w_ - left - right, frame_h_ - header - footer};

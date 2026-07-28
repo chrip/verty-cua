@@ -554,8 +554,9 @@ identifier had evidence and said no, and that verdict wins.
 
 **The contract holds.** A re-localized jump is reported as one large SCROLL
 event inside ONE page — because that is what it was — and emits no navigation.
-Report schema bumped 1 → 2 for `pages[].gaps` (document rows no frame ever
-showed) and `visits[].vtUncertaintyPx` / `relocalized`: a jump SKIPS content,
+Report schema bumped 1 → 2 for `pages[].gaps` (document rows for which no
+scrolling content was ever observed — skipped by a jump, or hidden behind a
+viewport-fixed element at every reachable offset) and `visits[].vtUncertaintyPx` / `relocalized`: a jump SKIPS content,
 pixels never captured cannot be reconstructed, and a schema-1 consumer was
 entitled to assume every pixel of a stitch had been observed.
 
@@ -588,6 +589,63 @@ territory): 1 page, 0 navigations, `dyErrorSum` **4000px → 1px**,
   captured extents, not document heights (the thumb puts those documents at
   ~13000 and ~4960px, and the scrollbar-predicted captured extents match the
   production JPGs to 1-2px).
+
+### The scrollbar as chrome, and overlay verification on the element's own pixels — 2026-07-28
+
+Two defects that the scrollbar work exposed, both closed.
+
+**The scrollbar column was being stitched as content.** With the bar now located
+exactly, it is excluded from the scrolling interior and painted from a
+**thumb-free strip** — the per-pixel MAXIMUM of the band over every frame of
+every visit, which is the track because the thumb is darker and always moves on,
+while the never-moving arrow glyphs survive. Arrows are painted at both document
+ends (like the header and footer bands) with clean track between. It is reported
+as a fifth `fixedRects` kind, `scrollbar`, with `uncertaintyPx: 0` — unlike the
+four content bands it is DETECTED rather than inferred from pixel stability, so
+its extent is exact. Rationale for not rendering the thumb at all: it encodes the
+scroll position, which is meaningless in document coordinates — the same reason
+the recorder hides `position:fixed` elements for its full-page reference render.
+Measured on rw4's deep page: the column was 92% blank white (an overlay bbox
+covered it, so the blank-fill pass could never recover it) plus 120 rows of thumb
+remnants; it is now clean track on 11602 of 11618 rows.
+
+**Overlay verification compared the whole bbox.** A round element in a square box
+has background corners — ~21% of the area for a disc — and the two verification
+frames show DIFFERENT content behind it by construction, so the corners alone
+could sink a genuine overlay. Measured on rw3: the blue chat-launcher disc beside
+the "Haben Sie Fragen?" pill scored MAD 42 against a threshold of 18 and was
+rejected, so it stayed baked into the scroll content at every position it was
+seen (~6 copies down the page — the "overlay-detection coverage gap" left open on
+2026-07-05). Verification now compares only the confirmed-fixed pixels inside the
+box: the disc scores **1.00**, and genuine overlays across the corpus land at
+0.04-3.2 instead of 0.5-13, a much wider margin from the threshold. Rejected
+candidates are now logged under `-v` (rw3 correctly rejects a 315×771 sprawl at
+MAD 30.8 and a 94×32 at 149.6).
+
+**A fragility this exposed, and the next thing worth fixing.** The scrollbar was
+first also excluded from the page identifier's sampling rect — principled, since
+the thumb tracks the scroll position and says nothing about WHICH page a frame
+shows. That cost rw5 a duplicate page (5 → 6) and the manifest guard caught it.
+Cause: `PageIdentifier` draws its sample blocks from a seeded RNG over the
+sampling rect, so **narrowing the rect by 15 of 1918 columns redraws every
+sample** and moves confidence and concentration by a few percent. rw5 sits on a
+knife edge — three visits at concentration 0.46-0.474 against
+`REVISIT_MIN_CONCENTRATION = 0.5` — and one tipped. The exclusion was reverted
+(its benefit is unmeasurable, the regression was measured) and the reasoning is
+recorded at the switch in `page_registry.cpp`.
+
+The real defect is the sample-dependence: identity verdicts should not move when
+the sampling geometry shifts slightly. A deterministic GRID over the rect instead
+of an RNG draw would make confidence and concentration stable and reproducible
+under exactly this kind of change. It would also move every session's numbers at
+once, so it needs its own measured pass — and rw5's 0.46-vs-0.5 margin should be
+understood before the thresholds are touched, not after.
+
+Side observation, deliberately NOT acted on: while a scrollbar is present a
+genuine fixed right SIDEBAR can no longer be detected, because `right_w_` counts
+contiguous fully-fixed columns inward from the edge and the bar's moving thumb
+stops that scan at the first column. No session in the corpus has both, so there
+is nothing to measure a fix against.
 
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.

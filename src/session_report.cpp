@@ -11,6 +11,7 @@ const char* kind_name(FixedKind k)
     case FixedKind::Footer: return "footer";
     case FixedKind::Left:   return "left";
     case FixedKind::Right:  return "right";
+    case FixedKind::Scrollbar: return "scrollbar";
     }
     return "unknown";
 }
@@ -85,7 +86,12 @@ bool SessionReport::write(const std::string& path,
                 << "{\"kind\": \"" << kind_name(p.fixedRects[k].kind) << "\", "
                 << "\"x\": " << r.x << ", \"y\": " << r.y << ", "
                 << "\"w\": " << r.width << ", \"h\": " << r.height
-                << ", \"uncertaintyPx\": " << FIXED_BAND_UNCERTAINTY_PX << "}";
+                // The scrollbar band is DETECTED, not inferred from pixel
+                // stability, so its extent is exact — unlike the four content
+                // bands, which can only over-detect.
+                << ", \"uncertaintyPx\": "
+                << (p.fixedRects[k].kind == FixedKind::Scrollbar
+                        ? 0 : FIXED_BAND_UNCERTAINTY_PX) << "}";
         }
         out << "], \"overlays\": [";
         for (size_t k = 0; k < p.overlays.size(); ++k) {
@@ -94,8 +100,10 @@ bool SessionReport::write(const std::string& path,
                 << "{\"x\": " << r.x << ", \"y\": " << r.y << ", "
                 << "\"w\": " << r.width << ", \"h\": " << r.height << "}";
         }
-        // Document rows no frame ever showed — the stitch is blank there. A
-        // scroll jump skips content, and pixels never captured cannot be
+        // Document rows for which no SCROLLING CONTENT was ever observed:
+        // skipped by a jump (blank in the stitch), or hidden at every reachable
+        // offset by a viewport-fixed element (the stitch shows that element).
+        // Either way the page content there was never captured and cannot be
         // reconstructed; saying so is part of the contract.
         out << "], \"gaps\": [";
         for (size_t k = 0; k < p.gaps.size(); ++k)
