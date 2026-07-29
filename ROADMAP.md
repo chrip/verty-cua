@@ -685,6 +685,59 @@ concentration from 0.526 to **0.429**, under the 0.5 bar, splitting that page in
 two. Scoping the vote per visit restored it and then some — **0.590**, more
 margin than the first-observation rule ever gave the suite's most fragile result.
 
+### Incremental folding: the canvas is built once, not once per visit — 2026-07-29
+
+`reconstruct()` is called by the registry after **every** visit, and it rebuilt
+the whole page each time — re-reading every earlier visit. Cost therefore grew as
+`V(V+1)/2` in the visits per page, which is invisible on the fixtures (1-4
+visits) and fatal for a long session.
+
+Now the scroll content, its written map and the count of folded visits are
+**persistent state** of the `PageStitcher`, and a call folds only the visits it
+has not seen. A fold is valid only while the geometry it was made under holds, so
+a change of the interior rect or of the overlay set triggers a full refold — both
+are inputs to every write, deciding which columns get copied at all. Growth of
+the document is not a geometry change: the buffer is extended and existing rows
+keep their document coordinates.
+
+The chrome is deliberately NOT part of the persistent buffer. The footer,
+bottom-anchored overlays and the scrollbar's lower arrow are positioned from the
+document BOTTOM, so their stamp locations move whenever the document grows;
+keeping them out means a growing page cannot leave stale chrome stranded
+mid-document. Each call composes `content_ + stamps` into the returned canvas.
+
+Measured with a new fixture, `--plan manyjumps` — eleven visits on ONE page
+(leap between the document's two ends ten times, each leap re-localized as a
+continuation):
+
+| session | visits | before | after | |
+|---|---|---|---|---|
+| session_manyjumps | 11 | 59.5s | **31.3s** | **−47%** |
+| rw5_mobileframe | 8 | 35.9s | 30.9s | −14% |
+| session_fling | 3 | 26.6s | 25.4s | −4% |
+| the other 13 | 1-4 | — | — | within ±2.6% (noise) |
+
+Verified by hashing the stitched PNG of all 16 sessions before and after: **every
+one is byte-identical**. That is the whole point — the previous rule was already
+per-visit with earlier-visit-wins, so folding visit by visit is the same
+computation with the redundant re-reads removed, and the hash comparison is what
+proves it rather than argues it.
+
+Cost: peak RSS rises 40-80MB (the persistent content buffer sits alongside the
+composed output — measured rw4 439 → 502MB). Accepted: the composition is only
+needed when someone asks for the image, so an online consumer would allocate it
+on demand rather than hold it.
+
+**How often the fast path actually applies**, from the `[page N fold]` verbose
+line: `manyjumps` folds 10 of its 11 visits incrementally (its geometry settles
+after the first), rw5 gets 3 incremental folds on page 0 — but on **rw3 and rw4
+every multi-visit fold is a full refold**, because their fixed bands or overlay
+sets change between visits. That is why those two barely moved while manyjumps
+halved. The trigger is deliberately conservative: it refolds on ANY change of the
+interior rect or the overlay set, since both decide which columns a write copies
+at all. Loosening it (an overlay set that only GREW, an interior that only
+shrank) needs its own correctness argument per case and is not attempted here.
+
 **A fragility the scrollbar work exposed, and the next thing worth fixing.** The scrollbar was
 first also excluded from the page identifier's sampling rect — principled, since
 the thumb tracks the scroll position and says nothing about WHICH page a frame

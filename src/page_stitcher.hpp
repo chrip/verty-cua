@@ -128,6 +128,19 @@ private:
     int     sb_w_ = 0;         // scrollbar columns at the right edge (0 = none)
     cv::Mat sb_clean_;         // thumb-free scrollbar strip (per-pixel max, all visits)
 
+    // ── Incremental fold state (see reconstruct()) ───────────────────────────
+    // The scrolling content is accumulated ONCE per visit and kept, so that
+    // reconstruct() — which the registry calls after every visit — folds only
+    // what is new instead of re-reading the whole page. The chrome is not part
+    // of it: stamps depend on the current document height and are re-applied
+    // per call.
+    cv::Mat              content_;       // folded scroll content, document coords
+    cv::Mat              written_;       // per-pixel written map, interior columns
+    std::vector<uint8_t> row_written_;   // any content pixel in this document row
+    size_t               folded_ = 0;    // visits already folded into content_
+    cv::Rect             folded_interior_;   // geometry the fold was made under
+    std::vector<cv::Rect> folded_overlays_;
+
     std::vector<FixedRect> rects_;
     std::vector<cv::Rect>  overlays_;
     int header_h_ = 0, footer_h_ = 0, left_w_ = 0, right_w_ = 0;

@@ -45,7 +45,8 @@ let PLAN_NAME = 'single';
 const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
 const PLANS = ['single', 'multipage', 'revisit', 'hostile',
-               'noscroll', 'revisit_noscroll', 'cookie', 'jumps', 'fling'];
+               'noscroll', 'revisit_noscroll', 'cookie', 'jumps', 'fling',
+               'manyjumps'];
 if (!PLANS.includes(PLAN_NAME)) {
   console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
@@ -55,7 +56,8 @@ const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
                        noscroll: 'session_noscroll',
                        revisit_noscroll: 'session_revisit_noscroll',
                        cookie: 'session_cookie', jumps: 'session_jumps',
-                       fling: 'session_fling' };
+                       fling: 'session_fling',
+                       manyjumps: 'session_manyjumps' };
 const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
                        cookie:  'scroll_page_cookie.html' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
@@ -142,6 +144,28 @@ const FLING_PLAN = [
   { jump: 0.00 }, { pause: 12 },   // leap back to the top      (−2353px)
   { to: 0.30 },   { pause: 10 },   // scroll down again (content-tracked)
   { jump: 1.00 }, { pause: 14 },   // leap back to the bottom   (+1647px)
+];
+
+// Many-visits plan: see the whole document once, then LEAP between its two ends
+// ten times. Every leap is beyond the shared-pixel window, so each one splits the
+// visit and is re-localized as a CONTINUATION — the result is ELEVEN visits on a
+// SINGLE page, which is what stresses the cost of folding a visit into the page
+// canvas. The correctness bar is the same as --plan fling (one page, no
+// navigations, the leaps present as large scroll events); what this fixture adds
+// is scale in the visit count, where a per-visit full rebuild is quadratic.
+const MANYJUMPS_PLAN = [
+  { pause: 8 },
+  { to: 1.00 }, { pause: 8 },      // see the whole document (leaps need seen territory)
+  { jump: 0.00 }, { pause: 5 },
+  { jump: 1.00 }, { pause: 5 },
+  { jump: 0.00 }, { pause: 5 },
+  { jump: 1.00 }, { pause: 5 },
+  { jump: 0.00 }, { pause: 5 },
+  { jump: 1.00 }, { pause: 5 },
+  { jump: 0.00 }, { pause: 5 },
+  { jump: 1.00 }, { pause: 5 },
+  { jump: 0.00 }, { pause: 5 },
+  { jump: 1.00 }, { pause: 8 },
 ];
 
 // Multi-page WITHOUT scrolling: page-change and REVISIT detection must work
@@ -550,6 +574,7 @@ try {
   else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
   else if (PLAN_NAME === 'jumps')            await runSingle(JUMPS_PLAN);
   else if (PLAN_NAME === 'fling')            await runSingle(FLING_PLAN);
+  else if (PLAN_NAME === 'manyjumps')        await runSingle(MANYJUMPS_PLAN);
   else                                       await runSingle(SINGLE_PLAN);   // single + hostile
 } catch (e) {
   console.error('record failed:', e.message);

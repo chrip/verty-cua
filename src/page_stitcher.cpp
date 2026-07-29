@@ -486,7 +486,6 @@ void PageStitcher::stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const
 cv::Mat PageStitcher::reconstruct()
 {
     const long doc_h = doc_height();
-    cv::Mat canvas(static_cast<int>(doc_h), frame_w_, CV_8UC3, cv::Scalar(255, 255, 255));
 
     // The scroll content is the interior rectangle inside the fixed bands.
     // Copying it wholesale (rather than masking the raw fixed pixels) avoids both
@@ -506,7 +505,8 @@ cv::Mat PageStitcher::reconstruct()
     const cv::Rect interior(left_w_, header_h_ + top_m,
                             frame_w_ - left_w_ - right_w_ - sb_w_,
                             frame_h_ - header_h_ - footer_h_ - top_m - bot_m);
-    if (interior.width <= 0 || interior.height <= 0) return canvas;
+    if (interior.width <= 0 || interior.height <= 0)
+        return cv::Mat(static_cast<int>(doc_h), frame_w_, CV_8UC3, cv::Scalar(255, 255, 255));
 
     // Overlay column masks per interior row: a row crossing an overlay copies
     // only the columns outside it. Those masks depend on the VIEWPORT row, not
@@ -590,13 +590,44 @@ cv::Mat PageStitcher::reconstruct()
         return std::max(0L, vt);
     };
 
-    // Per-pixel written map over the interior columns: 255 where a real content
-    // pixel has been placed. Overlay columns stay unwritten, which drives the
-    // blank-fill pass.
-    cv::Mat written = cv::Mat::zeros(static_cast<int>(doc_h), interior.width, CV_8UC1);
-    std::vector<uint8_t> row_written(static_cast<size_t>(doc_h), 0);
+    // ── Incremental folding ──────────────────────────────────────────────────
+    // reconstruct() is called after EVERY visit, so rebuilding the whole page
+    // each time re-reads every earlier visit: cost grows as V(V+1)/2 in the
+    // visits per page. The content buffer, its written map and the count of
+    // visits already folded are therefore PERSISTENT, and a call folds only the
+    // visits it has not seen yet.
+    //
+    // A fold is only valid while the geometry it was made under still holds. The
+    // interior rect and the overlay set are inputs to every write (they decide
+    // which columns are copied at all), so if either changed since the last fold
+    // the earlier writes are stale and everything is refolded. Growth of the
+    // document is not a change of geometry — the buffer is extended and the
+    // existing rows keep their document coordinates.
+    const bool geometry_changed = content_.empty()
+                               || interior != folded_interior_
+                               || overlays_ != folded_overlays_;
+    if (geometry_changed) {
+        content_     = cv::Mat(static_cast<int>(doc_h), frame_w_, CV_8UC3, cv::Scalar(255, 255, 255));
+        written_     = cv::Mat::zeros(static_cast<int>(doc_h), interior.width, CV_8UC1);
+        row_written_.assign(static_cast<size_t>(doc_h), 0);
+        folded_      = 0;
+    } else if (doc_h > content_.rows) {
+        cv::Mat grown(static_cast<int>(doc_h), frame_w_, CV_8UC3, cv::Scalar(255, 255, 255));
+        content_.copyTo(grown(cv::Rect(0, 0, frame_w_, content_.rows)));
+        content_ = grown;
+        cv::Mat grown_w = cv::Mat::zeros(static_cast<int>(doc_h), interior.width, CV_8UC1);
+        written_.copyTo(grown_w(cv::Rect(0, 0, interior.width, written_.rows)));
+        written_ = grown_w;
+        row_written_.resize(static_cast<size_t>(doc_h), 0);
+    }
+    if (verbose_ && folded_ < visits_.size())
+        std::cout << "[page " << page_id_ << " fold] visits " << folded_ << ".."
+                  << visits_.size() - 1 << " of " << visits_.size()
+                  << (geometry_changed ? "  (geometry changed: full refold)" : "  (incremental)")
+                  << "\n";
 
-    for (const VisitTrace& trace : visits_) {
+    for (size_t vi = folded_; vi < visits_.size(); ++vi) {
+      const VisitTrace& trace = visits_[vi];
       // Pass A — count the appearances of every document row IN THIS VISIT.
       std::vector<RowVotes> votes(static_cast<size_t>(doc_h));
       {
@@ -663,64 +694,69 @@ cv::Mat PageStitcher::reconstruct()
             const cv::Mat incoming = f.bgr(interior);
             for (int row = 0; row < interior.height; ++row) {
                 const int doc_row = dst_y + row;
-                if (row_written[doc_row]) continue;          // earlier visit owns it
+                if (row_written_[doc_row]) continue;         // earlier visit owns it
                 if (winner[static_cast<size_t>(doc_row)] >= 0
                     && winner[static_cast<size_t>(doc_row)] != f.index) continue;
 
                 const cv::Mat& mask = row_mask[row];
-                cv::Mat dst  = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
-                cv::Mat wrow = written.row(doc_row);
+                cv::Mat dst  = content_(cv::Rect(interior.x, doc_row, interior.width, 1));
+                cv::Mat wrow = written_.row(doc_row);
                 if (mask.empty()) { incoming.row(row).copyTo(dst);       wrow.setTo(255); }
                 else              { incoming.row(row).copyTo(dst, mask); wrow.setTo(255, mask); }
-                row_written[doc_row] = 1;
+                row_written_[static_cast<size_t>(doc_row)] = 1;
             }
         }
       }
-    }
 
-    // Blank-fill pass: interior pixels still unwritten sat behind a
-    // viewport-fixed overlay in the frame that won their document row. Recover
-    // them from any frame that shows the same document row at a viewport
-    // position clear of the overlays — a blank pixel has nothing to disagree
-    // with, so this pass takes the first sighting. Only needed when overlays
-    // created masked columns.
-    if (!overlays_.empty()) {
-        const long before = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written);
-        for (const VisitTrace& trace : visits_) {
-            VideoSource video = open_at(trace.visit);
-            if (!video.ok()) continue;
-
+      // Pass C — blank-fill: interior pixels still unwritten sat behind a
+      // viewport-fixed overlay in the frame that won their document row. Recover
+      // them from any frame of THIS visit that shows the same document row at a
+      // viewport position clear of the overlays — a blank pixel has nothing to
+      // disagree with, so the first sighting wins. Running it per visit is
+      // equivalent to one pass at the end (visits are folded in order, so the
+      // first sighting is the same), and it is what keeps the fold incremental.
+      if (!overlays_.empty()) {
+        const long before = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written_);
+        VideoSource video = open_at(trace.visit);
+        if (video.ok()) {
             VideoSource::Frame f;
             while (video.next(f) && f.index <= trace.visit.lastFrame) {
-                const long local = f.index - trace.visit.firstFrame;
-                long vt = local < static_cast<long>(trace.vt_by_frame.size())
-                              ? trace.vt_by_frame[local]
-                              : (trace.vt_by_frame.empty() ? 0 : trace.vt_by_frame.back());
-                vt = std::max(0L, vt);
-                const int dst_y = static_cast<int>(vt) + interior.y;
+                const int dst_y = static_cast<int>(offset_of(trace, f.index)) + interior.y;
                 if (dst_y + interior.height > static_cast<int>(doc_h)) continue;
 
                 const cv::Mat incoming = f.bgr(interior);
                 for (int row = 0; row < interior.height; ++row) {
                     const int doc_row = dst_y + row;
-                    cv::Mat wrow = written.row(doc_row);
+                    cv::Mat wrow = written_.row(doc_row);
                     cv::Mat fillable;
                     cv::bitwise_not(wrow, fillable);          // 255 where still blank
                     const cv::Mat& mask = row_mask[row];      // overlay cols in THIS frame
                     if (!mask.empty()) cv::bitwise_and(fillable, mask, fillable);
                     if (cv::countNonZero(fillable) == 0) continue;
-                    cv::Mat dst = canvas(cv::Rect(interior.x, doc_row, interior.width, 1));
+                    cv::Mat dst = content_(cv::Rect(interior.x, doc_row, interior.width, 1));
                     incoming.row(row).copyTo(dst, fillable);
                     cv::bitwise_or(wrow, fillable, wrow);
                 }
             }
         }
         if (verbose_) {
-            const long after = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written);
+            const long after = static_cast<long>(interior.width) * doc_h - cv::countNonZero(written_);
             std::cout << "[page " << page_id_ << " blank-fill] unwritten "
                       << before << " -> " << after << " interior px\n";
         }
-    }
+      }
+    }   // end of the per-visit fold
+
+    folded_          = visits_.size();
+    folded_interior_ = interior;
+    folded_overlays_ = overlays_;
+
+    // Compose the output: the folded content, then the chrome on top. The stamps
+    // are re-applied on every call because they depend on the CURRENT document
+    // height (the footer, bottom-anchored overlays and the scrollbar's lower
+    // arrow are all positioned from the bottom) — which is exactly why they are
+    // kept out of the persistent content buffer.
+    cv::Mat canvas = content_.clone();
 
     // ── Rows with no observed scrolling content ──────────────────────────────
     // Two permanent causes, both DECLARED (report `gaps`) rather than presented
@@ -739,7 +775,7 @@ cv::Mat PageStitcher::reconstruct()
         long run_start = -1;
         for (long y = content_top; y <= content_bot && content_bot > content_top; ++y) {
             const bool blank = y < content_bot
-                               && cv::countNonZero(written.row(static_cast<int>(y))) == 0;
+                               && cv::countNonZero(written_.row(static_cast<int>(y))) == 0;
             if (blank && run_start < 0) run_start = y;
             if (!blank && run_start >= 0) {
                 if (y - run_start >= GAP_MIN_ROWS) gaps_.push_back({run_start, y});

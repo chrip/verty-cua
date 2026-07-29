@@ -66,7 +66,7 @@ SCROLL_TOLERANCE = {"dyErrorSum": 12, "eventCountDiff": 8, "pageChanges": 0}
 # change and the registry re-localizes it afterwards. What must hold for these
 # sessions is the OUTCOME — one page, ZERO navigation events, and the jump
 # present as one large scroll event — not the intermediate classification.
-PAGECHANGE_EXPECTED = {"session_fling"}
+PAGECHANGE_EXPECTED = {"session_fling", "session_manyjumps"}
 
 # Multipage tolerances (Milestone 3). Baseline measured 2026-07-03 (totalError
 # 82px): boundaryErr=0 (the fixture's hard 1-frame cut detected exactly),
@@ -517,8 +517,10 @@ def main():
 
     # ── Run the tool ───────────────────────────────────────────────────────────
     os.makedirs(out_dir, exist_ok=True)
+    t_run = datetime.now(timezone.utc)
     proc = subprocess.run([BINARY, video, "-o", work_png, "-r", work_json, "-v"],
                           capture_output=True, text=True)
+    elapsed = (datetime.now(timezone.utc) - t_run).total_seconds()
     log = proc.stdout + proc.stderr
     if proc.returncode != 0:
         die(f"verty exited {proc.returncode}\n{log}")
@@ -576,6 +578,9 @@ def main():
         "outputs": outputs,
         "report": os.path.relpath(report_path, REPO),
         "totalError": total_error,
+        # Wall clock of the tool run. Machine-dependent, so never asserted — but
+        # logged so the history shows cost drift alongside quality drift.
+        "elapsedSec": round(elapsed, 2),
         "scroll": scroll,
         "pass": passed,
     }
@@ -616,7 +621,7 @@ def main():
               f"  badBlocks={ghost['badBlockFrac']*100:.2f}% "
               f"(tol {GHOST_TOLERANCE['badBlockFrac']*100:.0f}%)"
               f"    ghost: {'PASS' if ghost['pass'] else 'FAIL'}")
-    print(f"\n  overall: {'PASS' if passed else 'FAIL'}")
+    print(f"\n  overall: {'PASS' if passed else 'FAIL'}   ({elapsed:.1f}s)")
 
     if prev is not None:
         d = total_error - prev["totalError"]

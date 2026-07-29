@@ -19,6 +19,7 @@ of every frame so the stitcher's output can be scored against known truth.
 | `session_page1/` | Generated single-page dataset (frames + mp4 + ground truth) — the stitch benchmark session. |
 | `session_multipage/` | Generated multi-page dataset: page 1 → scroll → hovers → click → page 2 (Milestone-3 fixture). |
 | `session_fling/` | Generated single-page dataset with scroll LEAPS beyond the shared-pixel window — the intra-page re-localization fixture (M7). |
+| `session_manyjumps/` | Same, ten leaps → ELEVEN visits on one page — the fixture that makes per-visit folding cost visible (M7). |
 
 Both pages have the same layout dimensions: **header 72px, footer 56px, left
 sidebar 240px, right sidebar 180px**, at a 1280×900 viewport. Every link on a
@@ -159,7 +160,23 @@ REVISIT navigations, so the fixture genuinely fails without the feature.
 
 The **scrollbar** path cannot be exercised in the lab: CDP screenshots contain
 no scrollbar (verified — the right-edge modal value is page white in 100% of
-frames of all ten fixtures). `realworld/rw4_portal` is its only test.
+frames of every fixture). `realworld/rw4_portal` is its only test.
+
+```bash
+node record_session.mjs --plan manyjumps            # → session_manyjumps/
+python3 frames_to_mp4.py session_manyjumps
+```
+
+`manyjumps` is the same idea at SCALE: see the whole document once, then leap
+between its two ends ten times, so eleven visits land on a SINGLE page. Its
+correctness bar is the same (one page, zero navigations, the leaps as large
+scroll events), but what it exists to measure is the COST of folding a visit into
+the page canvas. `reconstruct()` runs after every visit, so rebuilding the whole
+page each time is quadratic in visits-per-page; this fixture makes that visible
+(59.5s before the incremental fold of 2026-07-29, 21.6s after — while every
+stitch in the suite stayed byte-identical). Each run's wall clock is printed and
+logged to `stitch_test_results.jsonl` as `elapsedSec`; it is never asserted,
+because it is machine-dependent.
 
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
