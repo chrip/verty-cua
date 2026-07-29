@@ -19,9 +19,13 @@ std::pair<int, float> ScrollDetector::best_dy(const cv::Mat& prev_gray,
 
     for (int dy = -MAX_SCROLL; dy <= MAX_SCROLL; dy += SCROLL_STEP) {
         if (dy == 0) continue;  // skip STATIC; we want the scroll component
-        auto a = extract_block(prev_gray, px, py + dy);
-        if (a.empty()) continue;
-        float mad = patch_mad(a, b);
+        // Same bounds rule as extract_block, but without building a Mat header
+        // per candidate offset (see patch_mad_at). Only the row range varies:
+        // px is loop-invariant and already proven in bounds, because the block
+        // `b` was extracted at px from a same-sized frame.
+        const int ay = py + dy;
+        if (ay < 0 || ay + BLOCK_SIZE > prev_gray.rows) continue;
+        float mad = patch_mad_at(prev_gray, px, ay, b);
         if (mad < best_mad) {
             best_mad    = mad;
             best_dy_val = dy;

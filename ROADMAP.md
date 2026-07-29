@@ -685,6 +685,49 @@ concentration from 0.526 to **0.429**, under the 0.5 bar, splitting that page in
 two. Scoping the vote per visit restored it and then some — **0.590**, more
 margin than the first-observation rule ever gave the suite's most fragile result.
 
+### The hot loop: patch_mad without OpenCV call overhead — 2026-07-29
+
+`patch_mad` is the inner loop of both the scroll detector (up to 2·MAX_SCROLL
+calls per sampled block per transition) and the page identifier (one call per
+canvas row per sampled block). It was `cv::absdiff` + `cv::mean`, and at 16×16
+the OpenCV overhead — a temporary, two kernel dispatches, and a `cv::Mat` header
+built per candidate position — dwarfs the arithmetic completely.
+
+Measured with a standalone benchmark of one identifier vote stage (120 blocks
+scanned down an 11618-row canvas): **322ms** for the OpenCV form against
+**12ms** for a raw pointer loop — **27×**, for the same result. Bit-identical, not
+just close: both sum exactly (a 16×16 patch sums to at most 65280) and the
+quotient k/256 is exactly representable in float. A second helper,
+`patch_mad_at`, compares a patch against a window of a larger image without
+building a header for the window at all.
+
+End to end this is 3-37% per session, not 27×, because video decoding and the
+reconstruct passes are untouched — it means `patch_mad` was roughly a third of
+total runtime and is now negligible:
+
+| session | before | after | |
+|---|---|---|---|
+| session_page1 | 24.8s | 15.7s | −37% |
+| session_hostile | 14.3s | 9.5s | −34% |
+| session_fling | 25.4s | 17.7s | −31% |
+| session_revisit | 13.7s | 9.5s | −31% |
+| rw1_newsportal | 11.7s | 9.0s | −23% |
+| rw4_portal | 21.6s | 19.0s | −12% |
+| rw5_mobileframe | 30.9s | 28.6s | −8% |
+
+All 16 stitched PNGs verified byte-identical to the pre-optimization hashes.
+
+This was NOT speculative: the measurement came first, from asking whether an
+index over page canvases would pay off. It would not have — the identifier's cost
+was constant-factor overhead, not algorithmic. With the overhead gone, matching a
+frame against every known page costs ~12ms per page instead of ~322ms, which
+moves the page count at which a shortlist index becomes necessary from about 3 to
+about 80. The dHash pre-filter therefore stays deferred (M4's reasoning holds:
+the corpus has at most 5 pages per session, so an index cannot be measured yet).
+When it IS measurable, two index keys already exist in the codebase: the
+scrollbar thumb height (a document-height fingerprint, invariant to scroll
+position) and the per-row signatures from the modal reconciliation.
+
 ### Incremental folding: the canvas is built once, not once per visit — 2026-07-29
 
 `reconstruct()` is called by the registry after **every** visit, and it rebuilt

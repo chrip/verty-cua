@@ -38,7 +38,9 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
         long  best_y   = -1;
         float best_mad = std::numeric_limits<float>::max();
         for (int cy = 0; cy + BLOCK_SIZE <= canvas_gray.rows; ++cy) {
-            const float mad = patch_mad(canvas_gray(cv::Rect(px, cy, BLOCK_SIZE, BLOCK_SIZE)), block);
+            // No Mat header per candidate row — this loop runs once per canvas
+            // row per sampled block and is the identifier's whole cost.
+            const float mad = patch_mad_at(canvas_gray, px, cy, block);
             if (mad < best_mad) { best_mad = mad; best_y = cy; }
         }
         // Vote only on NEAR-IDENTICAL matches (not merely similar): a weak
@@ -98,8 +100,8 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
             for (long s = -IDENT_VT_SLACK; s <= IDENT_VT_SLACK; ++s) {
                 const long y = cy + s;
                 if (y < 0 || y + BLOCK_SIZE > canvas_gray.rows) continue;
-                best_mad = std::min(best_mad, patch_mad(
-                    canvas_gray(cv::Rect(px, static_cast<int>(y), BLOCK_SIZE, BLOCK_SIZE)), block));
+                best_mad = std::min(best_mad,
+                                    patch_mad_at(canvas_gray, px, static_cast<int>(y), block));
             }
             if (best_mad < IDENT_MATCH_MAD) ++matched;   // near-identical, not just similar
         }

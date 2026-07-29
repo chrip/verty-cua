@@ -1,5 +1,6 @@
 #pragma once
 #include <opencv2/opencv.hpp>
+#include <cstdlib>
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 constexpr int BLOCK_SIZE = 16;          // pixels per block side
@@ -245,11 +246,47 @@ constexpr int SCROLL_PROPOSALS = 3;
 
 // ── Inline helpers ────────────────────────────────────────────────────────────
 
-// Mean absolute difference between two same-size single-channel patches.
+// Mean absolute difference between two same-size CV_8UC1 patches.
+//
+// This is the hottest code in the project: the scroll detector calls it up to
+// 2·MAX_SCROLL times per sampled block per transition, and the page identifier
+// once per candidate row of a whole page canvas. It is written as a raw loop
+// rather than cv::absdiff + cv::mean because at the 16×16 sizes involved the
+// OpenCV overhead — a temporary allocation and two kernel dispatches per call —
+// dwarfs the arithmetic entirely. Measured on the identifier's column scan over
+// an 11618-row canvas: 322ms for the OpenCV form against 12ms for this one, 27×
+// for the SAME result. Bit-identical, not merely close: both sum exactly (a
+// 16×16 patch sums to at most 65280) and the quotient k/256 is exactly
+// representable in float.
 inline float patch_mad(const cv::Mat& a, const cv::Mat& b) {
-    cv::Mat diff;
-    cv::absdiff(a, b, diff);
-    return static_cast<float>(cv::mean(diff)[0]);
+    CV_DbgAssert(a.type() == CV_8UC1 && b.type() == CV_8UC1 && a.size() == b.size());
+    unsigned acc = 0;
+    for (int y = 0; y < a.rows; ++y) {
+        const uint8_t* ra = a.ptr<uint8_t>(y);
+        const uint8_t* rb = b.ptr<uint8_t>(y);
+        for (int x = 0; x < a.cols; ++x)
+            acc += static_cast<unsigned>(std::abs(static_cast<int>(ra[x]) - static_cast<int>(rb[x])));
+    }
+    return static_cast<float>(acc) / static_cast<float>(a.rows * a.cols);
+}
+
+// The same, against the window of `img` with its top-left corner at (x, y) —
+// without constructing a Mat header for that window. Sliding a patch over an
+// image builds one header per candidate position, and at these sizes that is a
+// large part of the overhead above. The CALLER guarantees the window is in
+// bounds, which every hot loop already checks for its own reasons.
+inline float patch_mad_at(const cv::Mat& img, int x, int y, const cv::Mat& patch) {
+    CV_DbgAssert(img.type() == CV_8UC1 && patch.type() == CV_8UC1
+                 && x >= 0 && y >= 0
+                 && x + patch.cols <= img.cols && y + patch.rows <= img.rows);
+    unsigned acc = 0;
+    for (int r = 0; r < patch.rows; ++r) {
+        const uint8_t* ri = img.ptr<uint8_t>(y + r) + x;
+        const uint8_t* rp = patch.ptr<uint8_t>(r);
+        for (int c = 0; c < patch.cols; ++c)
+            acc += static_cast<unsigned>(std::abs(static_cast<int>(ri[c]) - static_cast<int>(rp[c])));
+    }
+    return static_cast<float>(acc) / static_cast<float>(patch.rows * patch.cols);
 }
 
 // Extract a BLOCK_SIZE×BLOCK_SIZE gray patch from a frame (bounds-checked).
