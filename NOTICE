@@ -1,0 +1,8 @@
+verty
+Copyright 2026 Christoph Schaefer
+
+This product includes software developed as a personal learning project.
+
+Third-party dependencies (not distributed with this source):
+  * OpenCV — https://opencv.org — Apache License 2.0 (OpenCV 4.5 and later).
+    verty links against OpenCV at build time; it is not bundled here.

@@ -187,14 +187,15 @@ scroll-event score. Baseline (2026-07-03): **totalError 82px** — boundary
 error 0, page heights −2/0, dyErrorSum 2px; sidebar bands +39 (the documented
 over-detection).
 
-## Real-world corpus (production sessions)
+## Real-world corpus (private recordings)
 
-`realworld/` holds five REAL session videos from the DOM-based production
-system (2021-01-18 portal dump; **webs elements only**), each with the
-production system's stitched screenshots as reference outputs
-(`production/*_orig.jpg`). The binaries are user data and are **not in git**
-— `realworld_manifest.json` (committed) defines the corpus with source paths,
-so the suite can be re-imported from the dump. `--all` includes these sessions.
+`realworld/` holds five REAL screen recordings, made manually on a private
+machine, each paired with reference full-page stitches of the same pages
+captured by a DOM-instrumented tool (`production/*.jpg`). Those files are
+personal data and are **not in git**; `realworld_manifest.json` (committed) is
+the corpus description — geometry, the measured baseline, and the per-case
+expectations the benchmark enforces — so anyone can reproduce the suite by
+recording their own equivalents. `--all` includes these sessions when present.
 
 Scoring is structural (runs, ≥1 page, plausible geometry), a printed comparison
 against the production reference, **plus the per-case `expect` block in

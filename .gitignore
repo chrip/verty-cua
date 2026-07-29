@@ -7,3 +7,6 @@ test_data/session_*/
 
 # real-world production sessions (user data — never committed; see realworld_manifest.json)
 test_data/realworld/
+
+# private mapping from the corpus's speaking names back to the original recordings
+test_data/realworld_sources.local.json

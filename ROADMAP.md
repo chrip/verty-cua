@@ -43,8 +43,9 @@ real-world corpus". Milestone 7 is the dedicated hardening pass, but robustness
 is earned continuously — a milestone that only works on synthetic fixtures is
 not done.
 
-**Corpus arrived (2026-07-04):** five production sessions (webs elements, with
-the DOM system's stitches as references) live in `test_data/realworld/` —
+**Corpus arrived (2026-07-04):** five real screen recordings, made manually on a
+private machine and paired with reference stitches of the same pages from a
+DOM-instrumented tool, live in `test_data/realworld/` —
 see `realworld_manifest.json` and test_data/README.md. First baseline: all
 five pass structurally; rw2's stitch is 1px off the production height; rw5
 (mobile-in-frame) tracks production per-page heights within 8px. Measured

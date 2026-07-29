@@ -1,10 +1,18 @@
 # verty
 
-Reconstruct a **full-page screenshot** from a screen recording of someone
-scrolling through a web page. The tool watches the video, works out how far the
-page scrolled in each frame and which parts of the screen are fixed chrome
-(header / footer / sidebars), then stitches the scrolling content back into one
-tall image with the fixed elements stamped in place.
+**Document coordinates from a screen recording alone.**
+
+`verty` watches a plain screen recording of somebody using a web page — no DOM,
+no browser extension, no accessibility tree, no SDK in the page — and recovers
+*where they were*: how far down the document every frame sat, which page it was
+on, which pages the session returned to and at what offset, the geometry of the
+chrome that never moved, and one settled full-page reconstruction per distinct
+page. Where a jump skipped content, or a sticky element hid rows at every
+reachable offset, it says so instead of filling them in.
+
+Everything is estimated from pixels, so it works on recordings of software you
+do not control — and on recordings made long before anyone thought to instrument
+anything.
 
 > ### Status: work in progress (proof of concept)
 > **Milestones 1–6 are done and M7 (real-world hardening) is well along** (see
@@ -15,8 +23,8 @@ tall image with the fixed elements stamped in place.
 > scroll events with timestamps, anti-ghosting for animated regions and floating
 > fixed overlays, persistent-noise handling for fixed-position video ads, and a
 > machine-readable session report (`-r`, schema v2). All measured by a
-> reproducible benchmark: ten recorded lab sessions plus five real production
-> screencasts, scored by one command.
+> reproducible benchmark: eleven recorded lab sessions plus five real screen
+> recordings, scored by one command.
 >
 > Still a prototype: fixed-band edges carry a declared uncertainty (bands only
 > over-detect, harmlessly), and document regions a jump skipped were never on
@@ -147,6 +155,28 @@ margin — details in [`test_data/README.md`](test_data/README.md)).
 See **[`test_data/README.md`](test_data/README.md)** for the HTML fixtures, the
 recorder's options, the `ground_truth.json` format, and exactly how the
 benchmark is scored.
+
+## Licence
+
+Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Chosen
+deliberately: it is permissive enough for anyone to use, modify and ship this
+(including commercially), it carries an explicit patent grant, and it is the
+same licence OpenCV itself uses from 4.5 onward, so there is no friction between
+this project and its one dependency.
+
+This is a personal learning project, published as a worked example of building a
+non-trivial computer-vision pipeline under a strict measurement discipline. If it
+is useful to you, take it.
+
+## The real-world corpus is not in this repository
+
+The five real screen recordings the benchmark scores against were recorded
+manually on a private machine and are personal data, so neither they nor their
+reference images are committed (see `.gitignore`).
+`test_data/realworld_manifest.json` is the committed description of that corpus —
+its geometry, the measured baseline, and the per-case expectations the benchmark
+enforces — so the lab fixtures reproduce from a clean clone and the real-world
+part reproduces for anyone who records their own equivalents.
 
 ## Layout
 

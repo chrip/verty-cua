@@ -1,18 +1,17 @@
 {
- "note": "Real production sessions (webs elements only) from the DOM-based production system, 2021-01-18 portal dump. Binaries are NOT in git (user data); this manifest defines the corpus. Production stitches are the DOM-based reference outputs.",
- "sourceRoot": "private-recordings",
+ "note": "Real-world corpus: five screen recordings made manually on a private machine, each paired with reference full-page stitches captured from the same pages by a DOM-instrumented tool. The recordings and the reference images are personal data and are NOT in git (see .gitignore) — this manifest is the committed description of the corpus: its geometry, the measured baseline, and the per-case expectations the benchmark enforces. Record your own equivalents to reproduce the suite.",
  "cases": [
   {
    "name": "rw1_newsportal",
    "description": "news portal, single page, deep scroll",
-   "source": "newsportal.mp4",
+   "recording": "newsportal.mp4",
    "video": {
     "w": 1918,
     "h": 956,
     "frames": 124,
     "fps": 4.63
    },
-   "productionStitches": [
+   "referenceStitches": [
     {
      "file": "newsportal_reference_1.jpg",
      "w": 1920,
@@ -33,14 +32,14 @@
   {
    "name": "rw2_textpage",
    "description": "dense text page, short single-page session",
-   "source": "textpage.mp4",
+   "recording": "textpage.mp4",
    "video": {
     "w": 1918,
     "h": 946,
     "frames": 63,
     "fps": 4.63
    },
-   "productionStitches": [
+   "referenceStitches": [
     {
      "file": "textpage_reference_1.jpg",
      "w": 1920,
@@ -61,14 +60,14 @@
   {
    "name": "rw3_landing",
    "description": "marketing landing site, 3 pages",
-   "source": "landing.mp4",
+   "recording": "landing.mp4",
    "video": {
     "w": 1916,
     "h": 956,
     "frames": 250,
     "fps": 3.74
    },
-   "productionStitches": [
+   "referenceStitches": [
     {
      "file": "landing_reference_1.jpg",
      "w": 1920,
@@ -107,14 +106,14 @@
   {
    "name": "rw4_portal",
    "description": "dark dashboard portal, 4 pages, very deep scroll",
-   "source": "portal.mp4",
+   "recording": "portal.mp4",
    "video": {
     "w": 1918,
     "h": 930,
     "frames": 438,
     "fps": 3.89
    },
-   "productionStitches": [
+   "referenceStitches": [
     {
      "file": "portal_reference_1.jpg",
      "w": 1920,
@@ -154,14 +153,14 @@
   {
    "name": "rw5_mobileframe",
    "description": "mobile flow inside phone mockup, 19 pages (hard case)",
-   "source": "mobileframe.mp4",
+   "recording": "mobileframe.mp4",
    "video": {
     "w": 1918,
     "h": 996,
     "frames": 428,
     "fps": 4.62
    },
-   "productionStitches": [
+   "referenceStitches": [
     {
      "file": "mobileframe_reference_1.jpg",
      "w": 1920,
