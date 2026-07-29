@@ -42,11 +42,17 @@ bool SessionReport::write(const std::string& path,
     const double fps = session.fps();
 
     out << "{\n";
-    // schema 2 adds pages[].gaps (document rows no frame ever showed) and
-    // visits[].vtUncertaintyPx. A consumer of schema 1 was entitled to assume
-    // every pixel of a stitch was observed; once a re-localized jump can skip
-    // content, that is no longer true and the difference must be declarable.
-    out << "  \"schema\": 2,\n";
+    // schema 3 renames pages[].docHeight to capturedExtent and adds
+    // documentHeight / reachedBottom / driftPx, plus a per-frame answer table.
+    // The old name was the honesty problem: it reported the deepest offset the
+    // session HAPPENED to reach, which a consumer reads as the height of the
+    // document. On a session that stopped early those differ by thousands of
+    // pixels, and gaps[] was empty, so the report claimed complete coverage of a
+    // document it had seen a third of. capturedExtent cannot be misread, and
+    // where the scrollbar was legible the real height is stated next to it with
+    // its own uncertainty.
+    // (schema 2 added pages[].gaps and visits[].vtUncertaintyPx.)
+    out << "  \"schema\": 3,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -66,7 +72,7 @@ bool SessionReport::write(const std::string& path,
         out << "    {\"id\": " << i
             << ", \"stitch\": \"" << escape(i < stitch_paths.size() ? stitch_paths[i] : "") << "\""
             << ", \"width\": " << p.image.cols
-            << ", \"docHeight\": " << p.docHeight
+            << ", \"capturedExtent\": " << p.capturedExtent
             << ", \"visits\": [";
         for (size_t v = 0; v < p.visits.size(); ++v) {
             const auto& t = p.visits[v];
@@ -79,7 +85,18 @@ bool SessionReport::write(const std::string& path,
                 << ", \"vtUncertaintyPx\": " << t.vt_uncertainty
                 << ", \"relocalized\": " << (t.bridged ? "true" : "false") << "}";
         }
-        out << "], \"fixedRects\": [";
+        out << "], \"documentHeight\": ";
+        if (p.documentHeight > 0)
+            out << "{\"value\": " << p.documentHeight
+                << ", \"uncertaintyPx\": " << p.documentHeightUncertainty
+                << ", \"source\": \"scrollbar\"}";
+        else
+            out << "null";     // no legible scrollbar: the height is unknowable
+        out << ", \"reachedBottom\": "
+            << (p.reachedBottom < 0 ? "null" : (p.reachedBottom ? "true" : "false"));
+        out << ", \"driftPx\": ";
+        if (p.driftPx >= 0) out << p.driftPx; else out << "null";
+        out << ", \"fixedRects\": [";
         for (size_t k = 0; k < p.fixedRects.size(); ++k) {
             const cv::Rect& r = p.fixedRects[k].rect;
             out << (k ? ", " : "")
@@ -141,6 +158,29 @@ bool SessionReport::write(const std::string& path,
                 << ", \"dy\": " << e.dy << ", \"vt\": " << e.vt << "}"
                 << (++written < total ? "," : "") << "\n";
         }
+    }
+    out << "  ],\n";
+
+    // ── Per-frame answers ────────────────────────────────────────────────────
+    // One row per frame of the video: which page it showed and how far down, or
+    // null with the reason there is no answer ("transition" = the frame fell in
+    // a page-change window, "blank" = it belonged to a visit dropped as a blank
+    // loading screen). The scroll events above list only the frames where the
+    // offset CHANGED; this lists them all, so a consumer can never mistake an
+    // unlisted frame for an unmoved one.
+    out << "  \"frames\": [\n";
+    const auto& fr = session.frames();
+    for (size_t i = 0; i < fr.size(); ++i) {
+        out << "    {\"frame\": " << fr[i].frame
+            << ", \"t\": " << fr[i].t
+            << ", \"pageId\": " << (fr[i].pageId < 0 ? std::string("null")
+                                                      : std::to_string(fr[i].pageId))
+            << ", \"vt\": " << (fr[i].vt < 0 ? std::string("null")
+                                              : std::to_string(fr[i].vt))
+            << ", \"reason\": " << (fr[i].reason.empty()
+                                        ? std::string("null")
+                                        : "\"" + fr[i].reason + "\"")
+            << "}" << (i + 1 < fr.size() ? "," : "") << "\n";
     }
     out << "  ]\n";
     out << "}\n";

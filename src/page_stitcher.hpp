@@ -5,6 +5,7 @@
 #include "scrollbar_tracker.hpp"
 #include "transition_classifier.hpp"
 #include "video_source.hpp"
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -96,7 +97,32 @@ public:
     [[nodiscard]] const std::vector<cv::Rect>& overlays() const { return overlays_; }
     // Confirmed persistent-noise mask (fixed video ads), viewport coords.
     [[nodiscard]] const cv::Mat& noise_mask() const { return noise_mask_; }
-    [[nodiscard]] long doc_height() const { return max_vt_ + frame_h_; }
+    // How much document this page's frames actually COVERED — deepest observed
+    // offset plus one viewport. NOT the document's height: a session that
+    // stopped early never saw the rest, and this number cannot know that. The
+    // document's own height, where the scrollbar could be read, is a separate
+    // and separately-declared estimate (document_height_estimate).
+    [[nodiscard]] long captured_extent() const { return max_vt_ + frame_h_; }
+
+    // The document's height per this page's calibrated scrollbar map, with the
+    // error it is entitled to. 0 / 0 when no map was calibrated.
+    [[nodiscard]] long document_height_estimate() const { return sb_map_.document_height(); }
+    [[nodiscard]] long document_height_uncertainty() const { return sb_map_.document_height_uncertainty(); }
+
+    // Measured drift of the dead-reckoned offsets against the scrollbar's
+    // absolute reference: the worst disagreement among the anchors the map
+    // accepted. -1 when there is no independent reference to measure against.
+    [[nodiscard]] long drift_px() const {
+        return sb_map_.valid() ? static_cast<long>(std::lround(sb_map_.residual())) : -1;
+    }
+
+    // Did the session reach the document's end? 1 yes, 0 no, -1 unknowable
+    // (no scrollbar, so no independent notion of "the end").
+    [[nodiscard]] int reached_bottom() const {
+        const long est = document_height_estimate();
+        if (est <= 0) return -1;
+        return captured_extent() + document_height_uncertainty() >= est ? 1 : 0;
+    }
     // Document rows never observed (valid after reconstruct()).
     [[nodiscard]] const std::vector<Gap>& gaps() const { return gaps_; }
     // This page's calibrated scrollbar map (invalid if never calibrated).

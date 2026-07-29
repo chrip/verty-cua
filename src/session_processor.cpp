@@ -146,6 +146,7 @@ bool SessionProcessor::run()
     PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_,
                           sensitivity_, scrollbar_.get());
     navigations_.clear();
+    std::vector<PageVisit> blank_visits;
     int  prev_page = 0;
     bool have_page = false;
     for (const PageVisit& visit : seg.visits) {
@@ -159,6 +160,7 @@ bool SessionProcessor::run()
                 std::cout << "[session] visit [" << visit.firstFrame << ".."
                           << visit.lastFrame << "] dropped: blank (stddev "
                           << stddev[0] << ")\n";
+            blank_visits.push_back(visit);
             continue;
         }
 
@@ -179,7 +181,11 @@ bool SessionProcessor::run()
     for (const PageRegistry::PageRecord& rec : registry.records()) {
         PageResult page;
         page.image        = rec.canvas;
-        page.docHeight    = rec.stitcher->doc_height();
+        page.capturedExtent = rec.stitcher->captured_extent();
+        page.documentHeight = rec.stitcher->document_height_estimate();
+        page.documentHeightUncertainty = rec.stitcher->document_height_uncertainty();
+        page.driftPx        = rec.stitcher->drift_px();
+        page.reachedBottom  = rec.stitcher->reached_bottom();
         page.fixedRects   = rec.stitcher->fixed_rects();
         page.overlays     = rec.stitcher->overlays();
         page.scrollEvents = rec.stitcher->scroll_events();
@@ -187,6 +193,31 @@ bool SessionProcessor::run()
         page.gaps         = rec.stitcher->gaps();
         pages_.push_back(std::move(page));
     }
+
+    // ── Per-frame answer table ───────────────────────────────────────────────
+    // Every frame of the video gets a row. Frames the segmenter left outside any
+    // visit (its page-change debounce window) and frames of a visit dropped as
+    // blank carry no offset, and say which of the two they are, rather than
+    // simply being absent from the report.
+    frames_.assign(static_cast<size_t>(frame_count_), {});
+    for (long i = 0; i < frame_count_; ++i) {
+        frames_[static_cast<size_t>(i)].frame  = i;
+        frames_[static_cast<size_t>(i)].t      = static_cast<double>(i) / fps_;
+        frames_[static_cast<size_t>(i)].reason = "transition";
+    }
+    for (const PageVisit& v : blank_visits)
+        for (long i = v.firstFrame; i <= v.lastFrame && i < frame_count_; ++i)
+            frames_[static_cast<size_t>(i)].reason = "blank";
+    for (size_t pi = 0; pi < pages_.size(); ++pi)
+        for (const PageStitcher::VisitTrace& t : pages_[pi].visits)
+            for (size_t k = 0; k < t.vt_by_frame.size(); ++k) {
+                const long i = t.visit.firstFrame + static_cast<long>(k);
+                if (i < 0 || i >= frame_count_) continue;
+                FrameRecord& f = frames_[static_cast<size_t>(i)];
+                f.pageId = static_cast<int>(pi);
+                f.vt     = t.vt_by_frame[k];
+                f.reason.clear();
+            }
 
     return !pages_.empty();
 }

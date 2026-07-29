@@ -54,7 +54,7 @@ bool PageRegistry::continues_last_page(const cv::Mat& first_frame_gray,
     if (!map.matches(r)) return false;
 
     const long predicted  = map.predict(r.thumb_top);
-    const long canvas_end = prev.doc_height();
+    const long canvas_end = prev.captured_extent();
     if (canvas_end - predicted >= SB_CONTINUATION_MAX_OVERLAP) return false;
 
     vt          = predicted;

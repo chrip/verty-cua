@@ -29,12 +29,29 @@ public:
     // One reconstructed DISTINCT page (valid after run()).
     struct PageResult {
         cv::Mat image;
-        long    docHeight = 0;
+        long    capturedExtent = 0;   // deepest observed offset + one viewport
+        long    documentHeight = 0;   // scrollbar estimate, 0 = unknown
+        long    documentHeightUncertainty = 0;
+        long    driftPx = -1;         // measured dead-reckoning drift, -1 = unknown
+        int     reachedBottom = -1;   // 1 yes / 0 no / -1 unknowable
         std::vector<FixedRect>   fixedRects;
         std::vector<cv::Rect>    overlays;                // interior fixed elements
         std::vector<ScrollEvent> scrollEvents;            // global frames / timestamps
         std::vector<PageStitcher::VisitTrace> visits;     // all visits of this page
         std::vector<PageStitcher::Gap> gaps;              // never-observed doc rows
+    };
+
+    // One frame of the session, with the answer to "which page, and where in
+    // it?" — or an explicit reason why there is no answer. The claim this tool
+    // makes is per FRAME, so every frame appears here: a scroll-event list alone
+    // silently omits the frames that belong to no visit (measured: up to a
+    // quarter of a real session).
+    struct FrameRecord {
+        long        frame = 0;
+        double      t = 0.0;
+        int         pageId = -1;      // -1 = not attributed to any page
+        long        vt = -1;          // -1 = no offset known
+        std::string reason;           // "" when localized, else why not
     };
 
     // One navigation between visits.
@@ -49,6 +66,7 @@ public:
     // ── Session outputs (valid after run()) ─────────────────────────────────
     [[nodiscard]] const std::vector<PageResult>& pages() const { return pages_; }
     [[nodiscard]] const std::vector<NavEvent>& navigations() const { return navigations_; }
+    [[nodiscard]] const std::vector<FrameRecord>& frames() const { return frames_; }
     [[nodiscard]] const TransitionCounts& transition_counts() const { return counts_; }
 
     [[nodiscard]] long   frame_count() const { return frame_count_; }
@@ -70,6 +88,7 @@ private:
     TransitionCounts        counts_;       // session-level (segmentation pass)
     std::vector<PageResult> pages_;
     std::vector<NavEvent>   navigations_;
+    std::vector<FrameRecord> frames_;      // one entry per frame of the video
 
     // Session pass: classification of the transition into every frame
     // (index 0 is a placeholder). seed_noise pre-loads the persistent-noise

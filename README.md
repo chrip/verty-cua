@@ -112,12 +112,23 @@ This produces `./build/verty`.
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON, `"schema": 2`): pages (stitch file,
-  geometry, visit frame ranges with their entry offset + declared uncertainty +
+- `-r` — optional **session report** (JSON, `"schema": 3`). Per page: the stitch
+  file, `capturedExtent` (how much document the frames actually covered),
+  `documentHeight` (the document's real height where the scrollbar could be read,
+  with its own uncertainty — `null` when unknowable), `reachedBottom`
+  (`true`/`false`/`null`), `driftPx` (dead-reckoning drift measured against the
+  scrollbar), visit frame ranges with their entry offset + declared uncertainty +
   a `relocalized` flag, fixed-element rectangles, interior overlays, and `gaps`
-  — document rows for which no scrolling content was ever observed), navigation
-  events, scroll events with timestamps (`{t, frame, pageId, dy, vt}`), and a
-  tally of transition types (identical / scroll / pageChange / unstable).
+  (document rows for which no scrolling content was ever observed). Per session:
+  navigation events, scroll events with timestamps, a transition tally, and
+  `frames[]` — one row per frame with `{pageId, vt}` or `null` plus the reason
+  there is no answer.
+
+  The distinction between `capturedExtent` and `documentHeight` is the point.
+  Only the first is derivable from the frames; a session that stopped early
+  cannot tell from its own pixels how much it never reached. Reporting one under
+  the name of the other would let a consumer read a third of a document as the
+  whole of it.
 
 ## Run the benchmark — from `git clone` to results
 

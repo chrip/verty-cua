@@ -176,16 +176,18 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start,
                   << "  vtStart=" << vt_start;
         if (vt_uncertainty > 0) std::cout << "±" << vt_uncertainty;
         std::cout << (bridged ? " (bridged)" : "")
-                  << "  docHeight=" << doc_height() << "px"
+                  << "  captured=" << captured_extent() << "px"
                   << "  scrollEvents=" << scroll_events_.size() << "\n";
-        if (sb_map_.valid())
-            std::cout << "[page " << page_id_ << " scrollbar] thumbH="
-                      << sb_map_.fingerprint() << "  map vt="
-                      << sb_map_.slope() << "*thumbTop+b  ("
-                      << (sb_map_.slope_fitted() ? "fitted" : "geometric")
-                      << ", " << sb_map_.points() << " anchors, residual "
-                      << sb_map_.residual() << "px, " << sb_map_.rejected()
-                      << " rejected)\n";
+        if (scrollbar_ && scrollbar_->located())
+            std::cout << "[page " << page_id_ << " scrollbar] "
+                      << (sb_map_.valid() ? "map" : "NO map")
+                      << "  thumbH=" << sb_map_.fingerprint()
+                      << "  slope=" << sb_map_.slope()
+                      << " (" << (sb_map_.slope_fitted() ? "fitted" : "geometric")
+                      << ")  anchors=" << sb_map_.points()
+                      << "  residual=" << sb_map_.residual() << "px"
+                      << "  rejected=" << sb_map_.rejected()
+                      << "  docHeight=" << sb_map_.document_height() << "\n";
     }
 }
 
@@ -485,7 +487,7 @@ void PageStitcher::stamp(cv::Mat& canvas, const FixedRect& fr, long doc_h) const
 // ── reconstruct (merge all visits) ────────────────────────────────────────────
 cv::Mat PageStitcher::reconstruct()
 {
-    const long doc_h = doc_height();
+    const long doc_h = captured_extent();
 
     // The scroll content is the interior rectangle inside the fixed bands.
     // Copying it wholesale (rather than masking the raw fixed pixels) avoids both

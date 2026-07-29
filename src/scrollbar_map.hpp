@@ -62,6 +62,16 @@ public:
     // Does this reading describe the same document as the map?
     [[nodiscard]] bool matches(const ScrollbarReading& r) const;
 
+    // ── The document's own height, which nothing else here can measure ──────
+    // A session that stopped scrolling early cannot tell from its own frames
+    // how much document it never reached. The calibrated map can: the track
+    // geometry falls out of a and b (see SB_TRACK_SYMMETRY_PX). 0 if invalid.
+    [[nodiscard]] long document_height() const;
+    // Declared error of that estimate: the map's own uncertainty at the deepest
+    // reachable offset, plus the cost of assuming the two arrow buttons are the
+    // same size.
+    [[nodiscard]] long document_height_uncertainty() const;
+
 private:
     void refit();
 

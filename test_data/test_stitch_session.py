@@ -22,7 +22,7 @@ Session types (auto-detected from the ground-truth schema):
   multipage  (e.g. session_multipage) — segmentation metrics (Milestone 3):
       pageCount        detected pages vs. ground truth
       boundaryErr      |first stable frame per navigation − ground truth|
-      per-page width / docHeight vs. what the visit actually saw
+      per-page width / capturedExtent vs. what the visit actually saw
       (fixed bands are only scored for visits that scrolled enough to
        reveal them — a no-scroll visit cannot detect fixed elements)
     plus the same scroll-event scoring across the whole session.
@@ -255,7 +255,7 @@ def score_single(report, gt, allow_page_change=False):
               and (allow_page_change
                    or report.get("transitions", {}).get("pageChange", -1) == 0))
 
-    p0 = pages[0] if pages else {"width": 0, "docHeight": 0, "fixedRects": []}
+    p0 = pages[0] if pages else {"width": 0, "capturedExtent": 0, "fixedRects": []}
     bands = fixed_from_rects(p0["fixedRects"])
 
     # The stitch can only contain what the session SAW: expected height is the
@@ -268,7 +268,7 @@ def score_single(report, gt, allow_page_change=False):
         "header": gt["fixed"]["headerHeight"], "footer": gt["fixed"]["footerHeight"],
         "left":   gt["fixed"]["leftWidth"],    "right":  gt["fixed"]["rightWidth"],
     }
-    measured = {"width": p0["width"], "height": p0["docHeight"], **bands}
+    measured = {"width": p0["width"], "height": p0["capturedExtent"], **bands}
 
     # Without scrolling, fixed elements are unknowable — the tool must not
     # CLAIM any (expected bands become 0, exact).
@@ -354,7 +354,7 @@ def score_multipage(report, gt):
             continue
         rp = r_pages[i]
         check(f"page{i}.width", rp["width"], vw, T["widthPx"])
-        check(f"page{i}.height", rp["docHeight"], seen_max + vh, T["heightPx"])
+        check(f"page{i}.height", rp["capturedExtent"], seen_max + vh, T["heightPx"])
         if seen_max >= T["minScrollForFixed"]:
             bands = fixed_from_rects(rp["fixedRects"])
             gfix = gpage["fixed"]
@@ -416,14 +416,28 @@ def score_realworld(report, session):
         "ran":        True,
         "pages":      len(pages),
         "pagesOk":    len(pages) >= 1,
-        "heightsOk":  all(p["docHeight"] >= vh for p in pages),
+        "heightsOk":  all(p["capturedExtent"] >= vh for p in pages),
         "scrollEvents": len(report.get("scrollEvents", [])),
     }
-    checks["pass"] = checks["pagesOk"] and checks["heightsOk"]
+    # Coverage honesty (schema 3): a page may not be readable as a COMPLETE
+    # capture unless it says so. Where the scrollbar gave a document height, the
+    # captured extent must not exceed it beyond the declared uncertainty, and
+    # reachedBottom must agree with the comparison it is derived from. Where the
+    # height is unknown, reachedBottom must be null rather than implying either.
+    coverage = []
+    for p in pages:
+        dh, rb, ce = p.get("documentHeight"), p.get("reachedBottom"), p["capturedExtent"]
+        if dh is None:
+            coverage.append(rb is None)
+        else:
+            slack = dh["value"] + dh["uncertaintyPx"]
+            coverage.append(ce <= slack + 1 and rb == (ce + dh["uncertaintyPx"] >= dh["value"]))
+    checks["coverageHonest"] = all(coverage)
+    checks["pass"] = checks["pagesOk"] and checks["heightsOk"] and checks["coverageHonest"]
 
     exp = manifest_expect(session)
     if exp:
-        heights = [p["docHeight"] for p in pages]
+        heights = [p["capturedExtent"] for p in pages]
         checks["pagesExpected"] = exp["pages"]
         checks["pagesMatch"]    = len(pages) == exp["pages"]
         windows = exp.get("pageHeightRange") or []
@@ -434,11 +448,17 @@ def score_realworld(report, session):
         checks["pass"] = (checks["pass"] and checks["pagesMatch"]
                           and checks["heightsInRange"])
 
+    # Reference stitches. Their real filenames on disk carry the identifiers of
+    # the private capture that produced them, and this log is COMMITTED — so the
+    # logged name is derived from the case and the file's position, matching the
+    # convention in realworld_manifest.json. Nothing read off the disk is
+    # recorded verbatim.
+    short = os.path.basename(session.rstrip(os.sep)).split("_", 1)[-1]
     production = []
-    for j in sorted(glob.glob(os.path.join(session, "production", "*_orig.jpg"))):
+    for i, j in enumerate(sorted(glob.glob(os.path.join(session, "production", "*.jpg"))), 1):
         img = cv2.imread(j, cv2.IMREAD_REDUCED_COLOR_8)
         if img is not None:
-            production.append({"file": os.path.basename(j),
+            production.append({"file": f"{short}_reference_{i}.jpg",
                                "w": img.shape[1] * 8, "h": img.shape[0] * 8})
     return checks, production
 
@@ -447,9 +467,17 @@ def print_realworld(checks, production, report):
     print(f"  pages={checks['pages']}  scrollEvents={checks['scrollEvents']}"
           f"  heightsOk={checks['heightsOk']}    structural: "
           f"{'PASS' if checks['pass'] else 'FAIL'}")
-    ours = [(p['width'], p['docHeight']) for p in report.get('pages', [])]
+    ours = [(p['width'], p['capturedExtent']) for p in report.get('pages', [])]
     print(f"  our stitches:        {ours}")
-    print(f"  production (DOM ref): {[(p['w'], p['h']) for p in production]}")
+    print(f"  reference stitches:   {[(p['w'], p['h']) for p in production]}")
+    for p in report.get("pages", []):
+        dh = p.get("documentHeight")
+        dhs = f"{dh['value']}±{dh['uncertaintyPx']}px ({dh['source']})" if dh else "unknown"
+        rb  = {True: "yes", False: "NO", None: "unknown"}[p.get("reachedBottom")]
+        drift = p.get("driftPx")
+        print(f"    page{p['id']}: captured {p['capturedExtent']}px  of document {dhs}"
+              f"  reached bottom: {rb}"
+              + (f"  measured drift {drift}px" if drift is not None else ""))
     if "pagesExpected" in checks:
         print(f"  manifest expects:     pages={checks['pagesExpected']} "
               f"({'ok' if checks['pagesMatch'] else 'MISMATCH'})   "

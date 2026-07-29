@@ -686,6 +686,63 @@ concentration from 0.526 to **0.429**, under the 0.5 bar, splitting that page in
 two. Scoping the vote per visit restored it and then some — **0.590**, more
 margin than the first-observation rule ever gave the suite's most fragile result.
 
+### Saying what is known and what is not: schema 3 — 2026-07-29
+
+An adversarial review of the contract found three places where it asserted more
+than it knew. All three are closed.
+
+**1. `docHeight` was a captured extent wearing the name of a document height.**
+`max_vt_ + frame_h_` is how much document the frames COVERED. On a session that
+stopped early those differ by thousands of pixels — rw1 captured 4736px of a
+document the scrollbar puts near 13000 — and because `gaps[]` was empty, the
+report read as complete coverage of a document it had seen a third of. The field
+is now `capturedExtent`, which cannot be misread, and beside it:
+
+- `documentHeight {value, uncertaintyPx, source}` — the document's real height,
+  derived from the calibrated scrollbar map. The track geometry falls out of the
+  map itself: `vt = 0` puts the thumb at `track_top = −b/a`, and the arrow
+  buttons are near enough equal that `track_h = frame_h − 2·track_top`. Measured
+  on rw4: track_top 16.6 against a true 17, track_h 896.7 against 897, height
+  **11613±39 against the reference system's 11624**; on rw2 **3977±13 against
+  3981**; on rw3's page 2 **4986±23** against an independently measured ~4960.
+  `null` where no map could be calibrated.
+- `reachedBottom` — true/false/**null**. rw3's page 2 now says `false`: the
+  session saw 4327px of a ~4986px document, which the report previously implied
+  it had covered entirely.
+- `driftPx` — dead-reckoning drift MEASURED, not assumed: the worst disagreement
+  between the accumulated offsets and the scrollbar's independent absolute
+  reference among the anchors the map accepted (rw3 page0 14px, rw4 deep page
+  10px, rw5 pages 1-2px). `null` where there is no independent reference.
+
+Two guards were needed to keep the estimate honest, both found by measurement:
+the slope must have been FITTED from real thumb travel — with the geometric
+fallback, extrapolating the length of a track magnified the assumption to 15232px
+for rw3's 960px single-viewport page — and a map still carrying the fallback slope
+may not REFUSE contradicting anchors, because it has nothing to protect and
+everything to learn (on rw1 eight anchors from a visit that never scrolled fixed a
+slope of 13.28, and the map then rejected the deep visit's 222px of travel, whose
+true slope is 14.85).
+
+rw1 ends as an admitted unknown rather than an estimate: it is an auto-refreshing
+news portal whose document LENGTH changes between reloads, so one linear map
+cannot describe its three visits (residual 340px against a 24px bar) and the map
+is refused. That is the correct outcome — `documentHeight: null`,
+`reachedBottom: null` — and it is what the honesty fix was for: the report no
+longer implies a complete capture, it says it does not know. Per-document-version
+maps would be a new capability and need a fixture; not attempted.
+
+**2. `scrollEvents[]` silently omitted frames.** It lists only frames where the
+offset CHANGED, and only inside visits, so a consumer could not distinguish a
+frame that did not move from a frame with no answer at all — measured, up to a
+quarter of a real session (rw1 31 of 124 frames). Schema 3 adds `frames[]`: one
+row per frame of the video with `{pageId, vt}`, or `null` plus the reason
+(`transition` for a frame inside a page-change window, `blank` for one belonging
+to a visit dropped as a loading screen).
+
+**3. `vtUncertaintyPx` asserted exactness.** It took two values across the whole
+real corpus: 0 on 18 of 20 visits, and 40 once. `driftPx` above now supplies the
+measured counterpart wherever an independent reference exists.
+
 ### The hot loop: patch_mad without OpenCV call overhead — 2026-07-29
 
 `patch_mad` is the inner loop of both the scroll detector (up to 2·MAX_SCROLL

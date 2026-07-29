@@ -20,7 +20,17 @@ ScrollbarMap::ScrollbarMap(int frame_h) : frame_h_(frame_h) {}
 bool ScrollbarMap::add(const ScrollbarReading& r, long vt)
 {
     if (!r.valid || vt < 0) return false;
-    if (valid_ && matches(r)
+    // Only a map whose slope was actually FITTED may refuse a contradicting
+    // anchor. The refusal exists to protect a well-determined map from an offset
+    // chain that broke — but a map still carrying the geometric fallback slope,
+    // because its anchors so far sat at one thumb position, has nothing to
+    // protect and everything to learn. Measured: on rw1 the first visit never
+    // scrolls, so eight anchors land on one thumb position and fix a geometric
+    // slope of 13.28; the deep third visit then travels 222 thumb px with a true
+    // slope of 14.01, every one of its anchors contradicts, and the map rejected
+    // them all until it invalidated itself — losing the document-height estimate
+    // on precisely the session that most needs it (4736px captured of ~13000).
+    if (valid_ && slope_fitted_ && matches(r)
         && std::abs(static_cast<double>(vt) - (a_ * r.thumb_top + b_)) > SB_MAX_RESIDUAL_PX) {
         ++rejected_;
         return false;
@@ -133,4 +143,38 @@ long ScrollbarMap::uncertainty(long predicted) const
 bool ScrollbarMap::matches(const ScrollbarReading& r) const
 {
     return valid_ && r.valid && std::abs(r.thumb_h - fingerprint_) <= SB_THUMB_H_TOL;
+}
+
+// ── document_height ───────────────────────────────────────────────────────────
+// vt = a·thumb_top + b, so vt = 0 puts the thumb at track_top = −b/a. Assuming
+// the arrow buttons at the two ends are the same size, the track spans
+// frame_h − 2·track_top, and the thumb's deepest position is
+// track_top + track_h − thumb_h. Feeding that back through the map gives the
+// deepest reachable offset, and the document is one viewport taller than that.
+long ScrollbarMap::document_height() const
+{
+    // The slope must have been FITTED from real thumb travel. With the geometric
+    // fallback the intercept is pinned but the slope is an assumption, and
+    // extrapolating it the full length of a track magnifies the assumption
+    // without bound: measured on rw3's single-viewport page 1, which never
+    // scrolled, the fallback slope produced 15232px for a 960px document. A
+    // height nobody can check is worse than an admitted unknown.
+    if (!valid_ || !slope_fitted_ || a_ <= 0.0 || fingerprint_ <= 0) return 0;
+    const double track_top = -b_ / a_;
+    const double track_h    = static_cast<double>(frame_h_) - 2.0 * track_top;
+    if (track_h <= fingerprint_) return 0;             // nonsense geometry
+    const double deepest_thumb = track_top + track_h - fingerprint_;
+    const double vt_max        = a_ * deepest_thumb + b_;
+    if (vt_max < 0.0) return 0;
+    return static_cast<long>(std::lround(vt_max + frame_h_));
+}
+
+long ScrollbarMap::document_height_uncertainty() const
+{
+    const long doc = document_height();
+    if (doc <= 0) return 0;
+    // The map's own error at that offset, plus a·SB_TRACK_SYMMETRY_PX for the
+    // assumption that both arrow buttons are the same size.
+    return uncertainty(doc - frame_h_)
+           + static_cast<long>(std::lround(a_ * SB_TRACK_SYMMETRY_PX));
 }

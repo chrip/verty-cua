@@ -183,6 +183,19 @@ constexpr double SB_SLOPE_ERR_FRAC  = 0.005;
 // (measured on the lab fling fixture's false-positive column: 192 of 214
 // rejected). Defence in depth behind the tracker's movement test.
 constexpr double SB_MAX_REJECT_FRAC = 0.25;
+// The calibrated map also yields the DOCUMENT HEIGHT, which no other signal in
+// this project can produce: vt = 0 puts the thumb at the track top, so
+// track_top = −b/a, and the arrow buttons at the two ends are near enough the
+// same size that track_h = frame_h − 2·track_top. The deepest reachable offset
+// is then a·(track_top + track_h − thumb_h) + b. Measured on rw4: track_top
+// 16.6 against a true 17, track_h 896.7 against 897, document height 11623
+// against the reference system's 11624. This matters because a session that
+// stopped early cannot know how much it missed from its own frames alone.
+//
+// The arrows are not exactly equal (measured 17px top, 16px bottom), so the
+// symmetry assumption costs one thumb pixel of track height, worth a·1 document
+// pixels. Two is the honest allowance.
+constexpr int    SB_TRACK_SYMMETRY_PX = 2;
 constexpr int    SB_THUMB_H_TOL     = 2;    // document fingerprint match; measured 72 vs 576 (≫ tol)
 // A scrollbar-derived continuation is accepted only where content matching is
 // blind BY CONSTRUCTION: the predicted offset must leave the page's canvas less

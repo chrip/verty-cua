@@ -187,6 +187,27 @@ scroll-event score. Baseline (2026-07-03): **totalError 82px** — boundary
 error 0, page heights −2/0, dyErrorSum 2px; sidebar bands +39 (the documented
 over-detection).
 
+## Coverage honesty: capturedExtent vs documentHeight
+
+Since schema 3 the report distinguishes two numbers that were previously one, and
+the benchmark enforces the distinction (`coverageHonest` in `score_realworld`):
+
+| field | meaning |
+|---|---|
+| `capturedExtent` | how much document the frames actually covered — deepest observed offset + one viewport |
+| `documentHeight` | the document's real height, from the calibrated scrollbar map, with its own `uncertaintyPx`; `null` when unknowable |
+| `reachedBottom` | `true` / `false` / `null` |
+| `driftPx` | dead-reckoning drift MEASURED against the scrollbar; `null` without an independent reference |
+
+The check asserts a page cannot be read as a complete capture unless it says so:
+where the height is known, the captured extent must not exceed it beyond the
+declared uncertainty and `reachedBottom` must agree with that comparison; where
+the height is unknown, `reachedBottom` must be `null` rather than implying
+either. Measured on the corpus: rw3's page 2 reports 4327px captured of a
+4986±23px document with `reachedBottom: false`, and rw1 — an auto-refreshing page
+whose document length changes between reloads, so no single map fits — reports
+both as `null`.
+
 ## Real-world corpus (private recordings)
 
 `realworld/` holds five REAL screen recordings, made manually on a private
