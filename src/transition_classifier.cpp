@@ -89,20 +89,33 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
 {
     cv::Mat diff;
     cv::absdiff(prev_gray, curr_gray, diff);
-    if (cv::mean(diff)[0] < IDENTICAL_FRAME_MAD)
-        return {TransitionType::Identical, 0};
 
-    // If everything that changed lies inside confirmed persistent noise (a
-    // playing fixed video ad), the page itself did not move: Identical. This
-    // also lets the segmenter's debounce window close during ad churn.
-    if (!dynamic_mask.empty()) {
-        cv::Mat masked = diff.clone();
-        masked.setTo(0, dynamic_mask);
-        const double area = static_cast<double>(diff.total())
-                            - cv::countNonZero(dynamic_mask);
-        if (area > 0 && cv::sum(masked)[0] / area < IDENTICAL_FRAME_MAD)
-            return {TransitionType::Identical, 0};
+    // ── Did anything change, in the part of the viewport that CAN change? ────
+    // This used to be a frame-wide mean, which cannot see a total change of a
+    // sub-region: an embedded phone screen is 12% of the frame and mostly white,
+    // so a complete screen swap moves the frame mean to 0.9-3.5 against a 2.0
+    // bar and read as a duplicate frame. Measured on one recording: thirteen
+    // different app screens inside a single visit, every boundary discarded.
+    //
+    // So the mean is taken over the ACTIVE area — the frame minus the pixels
+    // that carry no change signal: confirmed chrome, and confirmed persistent
+    // noise (a playing fixed video ad, whose churn must still read as Identical
+    // so the segmenter's debounce can close during it). Where the estimate is
+    // not mature enough to leave a meaningful area, the whole frame is used.
+    cv::Mat ignore;
+    if      (fixed_mask.empty())   ignore = dynamic_mask;
+    else if (dynamic_mask.empty()) ignore = fixed_mask;
+    else                           cv::bitwise_or(fixed_mask, dynamic_mask, ignore);
+    double active = static_cast<double>(diff.total());
+    if (!ignore.empty()) {
+        const double a = active - cv::countNonZero(ignore);
+        if (a >= IDENTICAL_MIN_ACTIVE_FRAC * active) active = a;
+        else                                         ignore.release();
     }
+    cv::Mat active_diff = diff;
+    if (!ignore.empty()) { active_diff = diff.clone(); active_diff.setTo(0, ignore); }
+    if (active <= 0 || cv::sum(active_diff)[0] / active < IDENTICAL_FRAME_MAD)
+        return {TransitionType::Identical, 0};
 
     // The vote histogram proposes a dy; the explained-fraction veto decides.
     // The proposal is used even when the histogram's own validity gates fail:
@@ -129,11 +142,7 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     cv::Mat smooth, changed;
     cv::blur(diff, smooth, cv::Size(3, 3));
     cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
-    cv::Mat ignore;   // chrome + persistent noise carry no page-change signal
-    if      (fixed_mask.empty())   ignore = dynamic_mask;
-    else if (dynamic_mask.empty()) ignore = fixed_mask;
-    else                           cv::bitwise_or(fixed_mask, dynamic_mask, ignore);
-    if (!ignore.empty())
+    if (!ignore.empty())          // chrome + noise carry no page-change signal
         changed.setTo(0, ignore);
 
     int changed_bands = 0, bands = 0;

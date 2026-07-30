@@ -68,16 +68,22 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
             noise_mask = noise.mask();
             break;
         case TransitionType::PageChange:
-            // Chrome is per page — reset. The noise accumulator is NOT reset
-            // and even ACCUMULATES here: a fixed video ad's churn is initially
-            // classified PAGE_CHANGE (chicken-and-egg — the evidence would
-            // otherwise never build up). A real navigation contributes only
-            // 1–3 transitions, far below DYNAMIC_CONFIRM_FRAMES; an ad storm
-            // contributes dozens and matures the mask.
             noise.accumulate(prev_gray, curr_gray);
             noise_mask = noise.mask();
-            chrome.reset();
-            chrome_mask = cv::Mat();
+            // The chrome estimate is NOT discarded here. Feeding the
+            // page-change transition to it like any other transition is
+            // strictly more informative: pixels that changed reset to 0 (chrome
+            // that really did change is cleared), pixels that did not keep
+            // counting (a shared template, or a host page whose embedded
+            // subframe is what changed). Blanket-resetting threw the second
+            // group away, so on a session whose page changes are in-place
+            // mutations the estimate never matured at all — measured on an
+            // embedded-prototype recording: 1529752 px of confirmed chrome
+            // immediately before a page change, 0 for the whole visit after,
+            // which left the classifier normalising against the whole frame for
+            // the rest of the session.
+            chrome.accumulate(prev_gray, curr_gray);
+            chrome_mask = chrome.mask();
             break;
         }
         prev_gray = curr_gray.clone();

@@ -17,6 +17,10 @@ constexpr int SCROLL_SAMPLES = 120;     // blocks sampled for scroll histogram
 constexpr int SAD_THRESHOLD = 18;       // max mean absolute diff to call a match
 constexpr int FIXED_CONFIRM_FRAMES = 6; // stable scroll events before a pixel is FIXED
 constexpr double IDENTICAL_FRAME_MAD = 2.0;      // below: duplicate frame / pause
+// Smallest share of the frame the chrome+noise estimate may leave before it is
+// treated as unusable for normalising that test (a nearly-everything estimate
+// would turn any flicker into 100% of the active area).
+constexpr double IDENTICAL_MIN_ACTIVE_FRAC = 0.05;
 // A page change is a change SPREAD over the viewport: the fraction of 32px
 // horizontal bands whose changed-pixel share exceeds BAND_CHANGED_MIN_FRAC.
 // Spread needs no chrome mask (works on no-scroll sessions where the online

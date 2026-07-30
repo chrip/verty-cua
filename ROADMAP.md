@@ -1164,6 +1164,71 @@ Worth stating plainly, because it is the lesson: a threshold fitted to one
 measurement of one case is not calibrated, and the only way to find out is to
 measure the same decision many times under different sampling.
 
+### The active area: what part of the viewport can change at all — 2026-07-30
+
+Two changes, both aimed at the same blind spot: the classifier was normalising
+against the whole frame, and the estimate that would tell it better was being
+thrown away.
+
+**The chrome estimate survives a page change.** It used to be blanket-reset there,
+which discards the evidence that a shared template did NOT change. Feeding the
+page-change transition to the accumulator like any other transition is strictly
+more informative — pixels that changed reset to 0, pixels that did not keep
+counting. It matters most on the sessions that never scroll: measured on the
+embedded-prototype recording, 1529752 px of confirmed chrome immediately before a
+page change and **0 for the whole visit after**, so the classifier spent the rest
+of the session normalising against the whole frame.
+
+**The IDENTICAL gate is measured over the active area.** A frame-wide mean cannot
+see a total change of a sub-region — the whole point of the previous section. The
+mean is now taken over the frame minus what carries no change signal (confirmed
+chrome, confirmed persistent noise), with a floor: if that leaves less than
+`IDENTICAL_MIN_ACTIVE_FRAC` of the frame the estimate is not trusted and the full
+frame is used. This also folds the old "all change inside noise ⇒ Identical" rule
+into the same expression instead of keeping it as a separate special case.
+
+**Result on the case that prompted it.** The visit that held thirteen app screens
+splits: 8 visits → 19, page changes 21 → 46, and the phone screen in the stitched
+page goes from layered grey ghosts to **one legible screen** — headline, body text,
+the "Online-Banking Login" block and the red button all readable. The suite is
+unmoved: all 17 sessions PASS with every `totalError`, ghost score and
+`dyErrorSum` byte-identical to the previous run, because on recordings whose chrome
+estimate already matured nothing about the arithmetic changed.
+
+**The cost, measured rather than discovered later.** More visits means more
+identity decisions, and each one is another chance to land near the bar. Re-running
+the 8-seed sweep:
+
+| session | before | after |
+|---|---|---|
+| rw1_newsportal | 1 page, 8/8 seeds | 1 page, **7/8** (its deciding visit now starts at frame 67 instead of 62, and that frame is a weaker match: 0.514 → 0.481 against a 0.465 bar) |
+| rw5_mobileframe | 6 pages, 8/8 | **5 / 6 / 7** (its later decisions cascade — one visit's verdict swings ±0.225 because the canvas it is compared against depends on earlier verdicts) |
+| the other ten | stable | stable |
+
+So the seed-robustness won in the previous section is partly spent here. It is
+spent on something real — a session whose content was unusable is now usable — and
+the two remaining unstable sessions are the two the corpus already documents as
+hard. It is recorded here rather than smoothed over.
+
+**The obvious repair was tried twice and does not work yet.** If one frame is thin
+evidence, identify a visit from its first few frames. Both aggregators break
+something:
+
+- **median of 3** (a marginal verdict must convince a majority of the frames):
+  rw1's reload-revisit drops below the bar → 2 pages, and rw4 fails its height
+  window.
+- **best of 3** (does any settled view recognise the page): rw1 is fixed and the
+  sibling-page collision still correctly refuses, but rw4's deep page truncates
+  from **11618px to 5542px** — the extra frames turn one of its continuations into
+  a revisit, and the re-localization that recovers the fling is lost.
+
+Both were measured on the corpus rather than reasoned about, and both are wrong
+for the same reason: the entry frames of a visit are not interchangeable evidence
+about the same thing. Which one to use depends on whether the question is "did
+this page reload" or "did the viewport jump inside it" — and those are decided by
+different thresholds today. `IDENT_ENTRY_FRAMES` is left at 1 until that is
+understood.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can
