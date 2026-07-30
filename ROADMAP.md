@@ -1053,10 +1053,10 @@ The 83-MAD worst block was the same defect inside the gallery fixture built one
 day earlier — in-place change blended rather than elected. So this is a real
 quality fix with a measured win and no lab cost.
 
-**It is blocked, and the blocker is worth more than the fix.** Sharpening the
-canvas changes it, which redraws `PageIdentifier`'s RNG samples, which flips rw5
-from 5 pages to 6 — the fourth time that same knife edge has moved. So the
-sample-dependence was finally measured properly, by sweeping the seed:
+**It was blocked, and the blocker was worth more than the fix.** Sharpening the
+canvas changes it, which redrew `PageIdentifier`'s RNG samples, which flipped rw5
+from 5 pages to 6 — the fourth time that same knife edge had moved. So the
+sample-dependence was measured properly, by sweeping the seed:
 
 | samples | seed 42 | seed 7 | seed 99 | seed 1234 | seed 555 |
 |---|---|---|---|---|---|
@@ -1086,13 +1086,13 @@ Two sampling schemes were tried and both failed, informatively:
   `session_manyjumps` — their continuations dropped below
   `CONTINUATION_MIN_CONFIDENCE`, one more decision revealed to be knife-edge.
 
-So the order of work is now forced, and it is not a refactor but a
+So the order of work was forced, and it was not a refactor but a
 **re-derivation**: measure the distribution of concentration and confidence over
-seeds for every decision in the corpus, choose thresholds with real margins (and
-a sample count that makes the margins meaningful), and re-baseline the manifest
-against the production reference stitches rather than against verty's own last
-run. Until then, an improvement anywhere upstream of the canvas cannot be told
-apart from a regression in page identity — which is precisely what happened here.
+seeds for every decision in the corpus, choose thresholds with real margins (and a
+sample count that makes the margins meaningful), and re-baseline the manifest
+where its expectation turned out to encode a coin toss. That is the next section;
+with it done, the row-signature fix landed unchanged and its only effect on the
+suite is the gallery ghost improvement in the table above.
 
 ### Page identity, re-derived from measured distributions — 2026-07-30
 

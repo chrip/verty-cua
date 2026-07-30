@@ -88,12 +88,32 @@ constexpr int INTERIOR_ROW_MARGIN = 12;
 // rows, so tracking several candidate appearances per row costs bytes instead
 // of a canvas copy each: 3 slots × 16 buckets × 3 channels ≈ 2MB for an
 // 11618-row page.
-constexpr int    ROW_SIG_BINS   = 16;
+// Bins per row signature, and the difference below which two observations are the
+// SAME appearance. These decide the vote's IDENTITY test, and 16 bins with a
+// tolerance of 12.0 were too coarse to be one: a row of mostly-white page with
+// sparse dark text has nearly the same bucket means whatever the text says, so
+// visually different appearances merged into one candidate and the elected
+// exemplar became whichever frame arrived last in the merged group — a different
+// frame for each row, which renders as a double exposure. Measured on an embedded
+// prototype tapped through thirteen screens: the canvas showed several of them
+// superimposed, and the same defect was already inside session_gallery, whose
+// ghost score carried a worst block of 83 MAD.
+//
+// At 64 bins with a tolerance of 3.0 the appearances separate. Measured:
+//
+//        fixture                16 bins / 12.0            64 bins / 3.0
+//        session_gallery ghost  3.07 / worst 83.06 / 0.98%  2.58 / 5.66 / 0.00%
+//        session_cookie ghost   2.57 / 4.32 / 0.00%         unchanged
+//        session_hostile ghost  2.77 / 13.35 / 0.00%        unchanged
+//        session_page1 error    106px                       unchanged
+//
+// The slot count is NOT the lever, which is worth recording because it looks like
+// it should be: raising ROW_VOTE_SLOTS from 3 to 24 changed the same output by
+// 2.1 MAD, i.e. nothing. Boyer-Moore eviction was never what lost the majority;
+// the signature could not tell the candidates apart in the first place.
+constexpr int    ROW_SIG_BINS   = 64;
 constexpr int    ROW_VOTE_SLOTS = 3;
-// Mean per-channel signature difference below which two observations are the
-// SAME appearance. Slightly above the 10.0 row-agreement bar the old freeze
-// used, because bucket means average JPEG noise away.
-constexpr double ROW_SIG_MATCH  = 12.0;
+constexpr double ROW_SIG_MATCH  = 3.0;
 
 // ── Interior fixed overlays (floating buttons, cookie banners) ───────────────
 // A viewport-fixed element that is NOT edge-anchored appears in the pixel
