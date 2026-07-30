@@ -43,7 +43,11 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-BINARY = os.path.join(REPO, "build", "verty")
+# VERTY_BIN lets an A/B run score a binary built elsewhere (e.g. a git worktree)
+# without touching build/. Such a run is NOT appended to the results history: the
+# history tracks the repository's own state, and an outside binary is not it.
+BINARY = os.environ.get("VERTY_BIN") or os.path.join(REPO, "build", "verty")
+EXTERNAL_BIN = bool(os.environ.get("VERTY_BIN"))
 RESULTS_LOG = os.path.join(HERE, "stitch_test_results.jsonl")
 
 # Stitch tolerances (px). Band tolerances match the contract's declared
@@ -645,8 +649,9 @@ def main():
     prev = same[-1] if same else None
     best = min(same, key=lambda e: e["totalError"]) if same else None
 
-    with open(RESULTS_LOG, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    if not EXTERNAL_BIN:
+        with open(RESULTS_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
 
     # ── Print ──────────────────────────────────────────────────────────────────
     print(f"\nStitch benchmark — {entry['session']} ({entry['type']})   "
@@ -673,7 +678,9 @@ def main():
         print(f"  best so far: {best['totalError']}px ({best['git'].get('commit','?')}, {best['timestamp'][:10]})")
     elif same:
         print(f"  ★ new best (or tied) — {total_error}px")
-    print(f"\n  logged to {os.path.relpath(RESULTS_LOG, REPO)}  ({len(history)+1} runs total)")
+    print(f"\n  logged to {os.path.relpath(RESULTS_LOG, REPO)}  ({len(history)+1} runs total)"
+          if not EXTERNAL_BIN else
+          f"\n  NOT logged (VERTY_BIN={os.environ['VERTY_BIN']})")
     for o in outputs:
         print(f"  stitched PNG archived: {o}")
     print(f"  session report archived: {entry['report']}\n")

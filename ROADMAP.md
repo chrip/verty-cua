@@ -865,6 +865,11 @@ wobble across `REVISIT_MIN_CONCENTRATION` — while its confidence barely moved
 (0.940 → 0.944) and its matched-block count went UP (125 → 136). Nothing about
 that page changed; the visit boundaries were identical; the samples were redrawn.
 
+**Superseded later the same day**: a seed sweep showed this is worse than
+instability — the shipped rw5 baseline is a seed artefact, and a deterministic
+grid makes it worse rather than better. See *The embedded screen flow: why its
+pages are unusable* below for the measurements and for what the fix now has to be.
+
 Side observation, deliberately NOT acted on: while a scrollbar is present a
 genuine fixed right SIDEBAR can no longer be detected, because `right_w_` counts
 contiguous fully-fixed columns inward from the edge and the bar's moving thumb
@@ -974,6 +979,120 @@ the panel, ghost madMean 3.07 / badBlocks 0.98%. It fails on the previous code i
 three independent ways (height 1457, panel claimed fixed, ghost madMean 64.7), and
 still fails with the veto gate alone (panel claimed fixed) — so it guards both
 axes, not just the one that happened to be measured last.
+
+### The embedded screen flow: why its pages are unusable — 2026-07-30
+
+The rate gate above stopped the phone-flow studies being erased, but the pages it
+now produces are still not usable: one canvas shows several app screens
+superimposed. Diagnosed on one session (424 frames, 4 pages), and the cause is
+not where it looks.
+
+**The visit that produces the mush contains thirteen different app screens.**
+Extracting one frame per dwell shows the participant walking a whole onboarding
+flow — bank search, bank selected, login form, password, account list, consent
+screen, consent toggled, "card being created", "you're all set" — thirteen states
+inside one visit, at seven document offsets, the states at one offset overwriting
+each other.
+
+**All thirteen boundaries were classified IDENTICAL.** Instrumenting the
+classifier gives the reason immediately: the first gate is a frame-wide mean
+absolute difference against `IDENTICAL_FRAME_MAD` (2.0), and the phone screen is
+357×555 px of a 1678×1020 frame — 11.6% of the area, mostly white with sparse
+text. A complete screen swap moves that mean to **0.87-3.47**. Measured on the
+thirteen boundaries: ten fell below 2.0 and were discarded by the mean gate; the
+other three were discarded by the second gate, which is the same frame-wide mean
+computed with the noise mask zeroed (masked means 0.94-1.71). The two real
+navigations either side of the visit measure 10.2-13.6 — that is the only reason
+they fire. **A frame-wide average cannot see a total change of a sub-region**, and
+that is the general bug: it applies equally to a gallery, a tab switcher, a
+subframe and an embedded prototype.
+
+The obvious replacement — count changed pixels instead of averaging their
+magnitude — is not usable as-is, and the measurement says why. Changed-pixel
+counts (3×3 blurred absdiff over `SAD_THRESHOLD`):
+
+| | changed px |
+|---|---|
+| true duplicate frames (lab and real) | **0** (p25 = 0 on every real recording) |
+| cursor moves, caret blinks, hover highlights | 100-5000 |
+| the 13 screen swaps | 10112-74630 |
+| **rw1 ad churn OUTSIDE the confirmed noise mask** | **10432-60220** (median 36060) |
+
+The ad's residual churn and the screen swaps occupy the same range, so any
+threshold either keeps erasing the screen flows or re-opens rw1's page-change
+storm. Nor is there a temporal separator: per-pixel change rate (ad 19.5% vs
+phone 10.6%), longest run of consecutive changes (6 vs 4), and longest still run
+(58 vs 60) all overlap, and a lab animation that must NOT be masked sits between
+them on every one of the three. **An ad and an app screen flow are genuinely
+indistinguishable as pixel-temporal processes.** What separates them is what
+fraction of the ACTIVE area they occupy — and the active area is exactly what the
+online chrome estimate would supply, except that it is blanket-reset at every page
+change, so on a session with 32 in-place page changes it never matures (measured
+`fixedPx=1529752` immediately before a page change, `0` for the whole visit
+after). That is the thread to pull, and it is the same adaptive-denominator idea
+the corpus has been asking for since the no-scroll sessions.
+
+**A second, independent defect — and it is fixed by one constant.** Even leaving
+the states in one page, the canvas was blending them *within* each row band. The
+cause is not the vote's slot count (raising `ROW_VOTE_SLOTS` from 3 to 24 changed
+the output by 2.1 MAD — nothing): it is the row SIGNATURE. Sixteen column-mean
+bins with a 12.0 tolerance cannot tell two mostly-white text rows apart, so
+visually different appearances merge into one candidate and the elected exemplar
+is whichever frame arrived last in that merged group — a different frame for each
+row, which reads as a double exposure. At 64 bins with a 3.0 tolerance the
+appearances separate. Measured, with no change to any other fixture:
+
+| fixture | 16 bins / 12.0 | 64 bins / 3.0 |
+|---|---|---|
+| session_gallery ghost | madMean 3.07, **madWorst 83.06**, badBlocks **0.98%** | 2.58, **5.66**, **0.00%** |
+| session_cookie ghost | 2.57 / 4.32 / 0.00% | unchanged |
+| session_hostile ghost | 2.77 / 13.35 / 0.00% | unchanged |
+| session_page1 totalError | 106px | unchanged |
+
+The 83-MAD worst block was the same defect inside the gallery fixture built one
+day earlier — in-place change blended rather than elected. So this is a real
+quality fix with a measured win and no lab cost.
+
+**It is blocked, and the blocker is worth more than the fix.** Sharpening the
+canvas changes it, which redraws `PageIdentifier`'s RNG samples, which flips rw5
+from 5 pages to 6 — the fourth time that same knife edge has moved. So the
+sample-dependence was finally measured properly, by sweeping the seed:
+
+| samples | seed 42 | seed 7 | seed 99 | seed 1234 | seed 555 |
+|---|---|---|---|---|---|
+| 120 (shipped) | **0.516 → 5 pages** | 0.443 → 6 | 0.442 → 7 | 0.402 → 6 | 0.459 → 6 |
+| 360 | 0.446 → 6 | 0.462 → 6 | 0.446 → 6 | 0.373 → 7 | 0.431 → 6 |
+
+rw5's concentration for that visit is **0.44 ± 0.04**, comfortably below
+`REVISIT_MIN_CONCENTRATION` = 0.5. The 0.516 that produces the committed 5-page
+baseline is an outlier of seed 42, and tripling the sample count does not rescue
+it — it confirms it. **The corpus expectation `rw5 → 5 pages` is calibrated to a
+lucky seed**, and so, to an unknown degree, is every other verdict sitting within
+a few percent of that threshold (rw1's reload merge at 0.526-0.590 and the
+fling fixture's continuation confidence are the two known others).
+
+Two sampling schemes were tried and both failed, informatively:
+
+- A deterministic GRID (the fix this document has recommended for three
+  sessions) **aliases with a page's own periodic layout**: samples land on evenly
+  spaced cards and sidebar rows, their votes agree on offsets that are multiples
+  of the layout period, and the concentration of a template collision rises. It
+  merged the two sibling fixture pages of `session_revisit_noscroll` — different
+  documents sharing one chrome template — into a single page, which is the exact
+  false merge concentration exists to prevent.
+- Keeping the draw random but anchoring the SEQUENCE to the frame instead of the
+  interior rect (so a rect change only adds or removes samples at its edge) fixed
+  rw1, rw5 and revisit_noscroll, and broke `session_fling` and
+  `session_manyjumps` — their continuations dropped below
+  `CONTINUATION_MIN_CONFIDENCE`, one more decision revealed to be knife-edge.
+
+So the order of work is now forced, and it is not a refactor but a
+**re-derivation**: measure the distribution of concentration and confidence over
+seeds for every decision in the corpus, choose thresholds with real margins (and
+a sample count that makes the margins meaningful), and re-baseline the manifest
+against the production reference stitches rather than against verty's own last
+run. Until then, an improvement anywhere upstream of the canvas cannot be told
+apart from a regression in page identity — which is precisely what happened here.
 
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
