@@ -21,11 +21,13 @@ anything.
 > scroll offset), **intra-page re-localization of scroll jumps too large for
 > frame-to-frame matching** (flings, Page-Down chains, scrollbar-thumb drags),
 > scroll events with timestamps, anti-ghosting for animated regions and floating
-> fixed overlays, persistent-noise handling that separates a fixed-position video
-> ad from a gallery or an embedded screen flow the user clicks through, and a
-> machine-readable session report (`-r`, schema 3). All measured by a
-> reproducible benchmark: twelve recorded lab sessions plus five real screen
-> recordings, scored by one command.
+> fixed overlays, **subframes** — a region that changes while the document does not
+> is reported with its position, and if it settles into states (a gallery, an
+> embedded prototype tapped through screen by screen) each state is written as its
+> own image, while a region that never holds still is called noise and kept out of
+> the document model — and a machine-readable session report (`-r`, schema 4). All
+> measured by a reproducible benchmark: thirteen recorded lab sessions plus five
+> real screen recordings, scored by one command.
 >
 > Still a prototype: fixed-band edges carry a declared uncertainty (bands only
 > over-detect, harmlessly), and document regions a jump skipped were never on
@@ -113,7 +115,7 @@ This produces `./build/verty`.
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON, `"schema": 3`). Per page: the stitch
+- `-r` — optional **session report** (JSON, `"schema": 4`). Per page: the stitch
   file, `capturedExtent` (how much document the frames actually covered),
   `documentHeight` (the document's real height where the scrollbar could be read,
   with its own uncertainty — `null` when unknowable), `reachedBottom`
@@ -124,6 +126,15 @@ This produces `./build/verty`.
   navigation events, scroll events with timestamps, a transition tally, and
   `frames[]` — one row per frame with `{pageId, vt}` or `null` plus the reason
   there is no answer.
+
+  Per session it also carries `subframes[]`: each region that changed while the
+  document did not, with its rectangle in frame coordinates, how many times it
+  changed, and its `kind`. A `screenflow` lists its settled `states` — frame,
+  timestamp, how long it was held, and the image file each was written to
+  (`<out>_sub0_state00.png`, …); a `noise` region lists none, because a playing
+  video has no state worth keeping. What separates them is whether the region ever
+  held still: measured, a fixed video ad 0% of its changes, an embedded phone
+  screen 31-39%, a panel tapped 30 times 100%.
 
   The distinction between `capturedExtent` and `documentHeight` is the point.
   Only the first is derivable from the frames; a session that stopped early
@@ -196,7 +207,7 @@ part reproduces for anyone who records their own equivalents.
 src/            the tool — SessionProcessor → SessionSegmenter → PageRegistry
                 (PageIdentifier, ScrollbarTracker + ScrollbarMap) →
                 PageStitcher; TransitionClassifier, ScrollDetector,
-                FixedAccumulator, VideoSource, SessionReport
+                FixedAccumulator, SubframeTracker, VideoSource, SessionReport
 test_data/      HTML fixtures, session recorder, mp4 muxer, benchmark + results log
 CMakeLists.txt
 ```

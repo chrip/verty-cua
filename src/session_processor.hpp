@@ -4,6 +4,7 @@
 #include "page_registry.hpp"
 #include "scrollbar_tracker.hpp"
 #include "session_segmenter.hpp"
+#include "subframe_tracker.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -68,6 +69,11 @@ public:
     [[nodiscard]] const std::vector<NavEvent>& navigations() const { return navigations_; }
     [[nodiscard]] const std::vector<FrameRecord>& frames() const { return frames_; }
     [[nodiscard]] const TransitionCounts& transition_counts() const { return counts_; }
+    // Regions that changed while the document did not, with the states of the
+    // ones that settled (see subframe_tracker.hpp).
+    [[nodiscard]] const std::vector<SubframeTracker::Subframe>& subframes() const {
+        return subframes_;
+    }
 
     [[nodiscard]] long   frame_count() const { return frame_count_; }
     [[nodiscard]] int    frame_w() const { return frame_w_; }
@@ -97,7 +103,8 @@ private:
     [[nodiscard]] std::vector<Transition> classify_transitions(
         const cv::Mat& seed_noise = cv::Mat());
 
-    cv::Mat noise_mask_;   // matured persistent-noise mask (last classify pass)
+    cv::Mat noise_mask_;
+    std::vector<SubframeTracker::Subframe> subframes_;   // matured persistent-noise mask (last classify pass)
 
     // The session's vertical scrollbar, located during the classification pass.
     // Absolute-offset evidence for jumps no content matching can follow; shared

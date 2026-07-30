@@ -85,6 +85,7 @@ MULTIPAGE_TOLERANCE = {
     "heightPx": 32,          # per page, vs what the visit actually saw
     "fixedPx": 48,           # per band, only for visits that scrolled ≥ minScrollForFixed
     "minScrollForFixed": 150,
+    "statesPx": 2,           # settled states vs taps: a tap can read as a duplicate
     "vtStartPx": 32,         # revisit entry offset vs ground truth
 }
 
@@ -313,6 +314,28 @@ def print_single(metrics, total_error, stitch_pass, scroll, report, allow_page_c
           + (f"   never-observed rows = {sum(g['to'] - g['from'] for g in gaps)}px" if gaps else ""))
 
 
+def subframe_over(report, box):
+    """The reported subframe that covers a declared region, if any.
+
+    Matched by overlap against the declared box rather than by exact geometry: the
+    detected rectangle is the median of what actually repainted, which sits a pixel
+    or two inside the element's own bounds."""
+    bx, by = float(box["x"]), float(box["y"])
+    bw, bh = float(box["width"]), float(box["height"])
+    best, best_ratio = None, 0.5
+    for sf in report.get("subframes", []):
+        r = sf["rect"]
+        ix = max(0.0, min(bx + bw, r["x"] + r["w"]) - max(bx, r["x"]))
+        # The declared box is in DOCUMENT coordinates and the subframe rect in
+        # frame coordinates, so only the horizontal extent and the size can be
+        # compared without knowing the scroll offset at the time.
+        iy = min(bh, r["h"]) if abs(bh - r["h"]) <= 24 else 0.0
+        ratio = (ix * iy) / max(1.0, bw * bh)
+        if ratio > best_ratio:
+            best, best_ratio = sf, ratio
+    return best
+
+
 # ── Multipage-session scoring ─────────────────────────────────────────────────
 def score_multipage(report, gt):
     T = MULTIPAGE_TOLERANCE
@@ -366,6 +389,18 @@ def score_multipage(report, gt):
         # this fixture exists to catch — in-place change read as a fixed video
         # ad, its pixels excluded from every write and stamped once at a
         # viewport row instead.
+        # An ANIMATED region is the other branch of the same decision: it must be
+        # reported as a subframe too, and it must keep no state. Same page, same
+        # geometry as the mutating one in the sibling fixture — the two differ only
+        # in whether the region ever holds still.
+        for d in gt.get("dynamicRegions", []):
+            if d.get("kind") != "animated":
+                continue
+            sf = subframe_over(report, d["doc"])
+            check(f"page{i}.animatedRegionIsNoise",
+                  0 if (sf and sf["kind"] == "noise") else 1, 0, 0)
+            check(f"page{i}.animatedRegionStates", sf["settledStates"] if sf else 0, 0, 0)
+
         mut = gpage.get("mutatingRegion")
         if mut:
             claimed = sum(1 for o in rp.get("overlays", [])
@@ -373,6 +408,14 @@ def score_multipage(report, gt):
                           and abs(o["h"] - mut["height"]) <= 24
                           and abs(o["x"] - mut["x"]) <= 24)
             check(f"page{i}.mutRegionClaimedFixed", claimed, 0, 0)
+            # A declared mutating region must be reported as a SCREEN FLOW whose
+            # states are kept — one per tap, give or take the odd repaint the
+            # classifier reads as a duplicate.
+            sf = subframe_over(report, mut)
+            check(f"page{i}.mutRegionIsScreenflow",
+                  0 if (sf and sf["kind"] == "screenflow") else 1, 0, 0)
+            check(f"page{i}.mutRegionStates", sf["settledStates"] if sf else 0,
+                  gpage.get("taps", 0), T["statesPx"])
         if seen_max >= T["minScrollForFixed"]:
             bands = fixed_from_rects(rp["fixedRects"])
             gfix = gpage["fixed"]

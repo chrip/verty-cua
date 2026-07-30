@@ -199,14 +199,54 @@ const SCREENS = [
      <div class="tile" style="background:#14503a"></div>
    </div><div class="tag" style="color:#8fd6b4">SCREEN 3</div>`,
 ];
+// Loading this page with the fragment #video turns the panel into the OTHER
+// branch of the same decision: a region that changes in place and NEVER holds
+// still — a playing video, an animated ad, a spinner. Same geometry, same
+// position, same everything else, so a benchmark can attribute a difference in
+// behaviour to the axis under test and nothing else.
+const VIDEO_MODE = location.hash === '#video';
 let screenIdx = 0;
 const panel = document.getElementById('panel');
 function render() { panel.innerHTML = SCREENS[screenIdx]; }
-render();
-document.getElementById('panel-next').addEventListener('click', () => {
-  screenIdx = (screenIdx + 1) % SCREENS.length;
-  render();                                   // instant, no transition
-});
+
+if (VIDEO_MODE) {
+  panel.innerHTML = '<canvas id="panel-canvas" width="320" height="260"></canvas>';
+  const cv = document.getElementById('panel-canvas');
+  const ctx = cv.getContext('2d');
+  let t = 0;
+  let playing = false;
+  // It starts on the button, not on load, so a recording can scroll the panel
+  // into view while the page is STILL. Scrolling past something that is animating
+  // is a different problem with its own fixture (the M5 lesson): the noise mask
+  // lives in viewport space and cannot follow a region that moves, so the
+  // animation degrades scroll detection — measured 7 lost scroll events and 150px
+  // of dy error when this fixture started playing before its scroll.
+  document.getElementById('panel-next').addEventListener('click', () => { playing = true; });
+  (function frame() {
+    if (!playing) { requestAnimationFrame(frame); return; }
+    t += 1;
+    // High-contrast, non-repeating churn: a moving hue sweep with drifting
+    // blocks. Every rendered frame differs from the last over most of the
+    // panel, which is what "never holds still" has to mean in pixels.
+    ctx.fillStyle = `hsl(${(t * 7) % 360}, 70%, 45%)`;
+    ctx.fillRect(0, 0, 320, 260);
+    for (let i = 0; i < 9; i++) {
+      const x = (i * 61 + t * 11) % 320, y = (i * 37 + t * 7) % 260;
+      ctx.fillStyle = i % 2 ? '#ffffff' : '#101820';
+      ctx.fillRect(x, y, 74, 46);
+    }
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('PLAYING ' + t, 12, 240);
+    requestAnimationFrame(frame);
+  })();
+} else {
+  render();
+  document.getElementById('panel-next').addEventListener('click', () => {
+    screenIdx = (screenIdx + 1) % SCREENS.length;
+    render();                                   // instant, no transition
+  });
+}
 
 function r(n) { return Math.round(n * 100) / 100; }
 function docBox(el) {
@@ -236,10 +276,14 @@ window.addEventListener('load', () => {
     page: pageMetrics(), regions: reg,
     fixed: { headerHeight: reg.header.height, footerHeight: reg.footer.height,
              leftWidth: reg.left.width, rightWidth: reg.right.width },
-    // The panel is where the punctuated in-place change happens: recorded so a
-    // scorer can say WHERE the change was, not just that there was some.
-    mutatingRegion: reg.panel,
-    screens: SCREENS.length,
+    // The panel is where the in-place change happens. Which KIND it is decides
+    // what a scorer may demand: a region that settles into states is content
+    // (and must not be claimed as a fixed overlay), a region that never settles
+    // is noise (and its pixels are unpredictable, so the ghost metric has to
+    // skip it).
+    ...(VIDEO_MODE ? { dynamicRegions: [{ kind: 'animated', doc: docBox(panel) }] }
+                   : { mutatingRegion: reg.panel }),
+    screens: VIDEO_MODE ? 0 : SCREENS.length,
   };
   console.log('[GROUND TRUTH]', window.GROUND_TRUTH);
 });

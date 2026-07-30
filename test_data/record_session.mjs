@@ -49,7 +49,7 @@ const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
 const PLANS = ['single', 'multipage', 'revisit', 'hostile',
                'noscroll', 'revisit_noscroll', 'cookie', 'jumps', 'fling',
-               'manyjumps', 'gallery'];
+               'manyjumps', 'gallery', 'gallery_video'];
 if (!PLANS.includes(PLAN_NAME)) {
   console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
@@ -61,10 +61,16 @@ const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
                        cookie: 'session_cookie', jumps: 'session_jumps',
                        fling: 'session_fling',
                        manyjumps: 'session_manyjumps',
-                       gallery: 'session_gallery' };
+                       gallery: 'session_gallery',
+                       gallery_video: 'session_gallery_video' };
 const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
                        cookie:  'scroll_page_cookie.html',
-                       gallery: 'scroll_page_gallery.html' };
+                       gallery: 'scroll_page_gallery.html',
+                       gallery_video: 'scroll_page_gallery.html' };
+// Fragment appended to the page URL. scroll_page_gallery.html reads #video and
+// turns its panel from tap-driven states into continuous churn, so the two plans
+// differ on exactly one axis.
+const FRAGMENT = { gallery_video: '#video' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
 const OUT_DIR   = resolve(argv[1] || join(HERE, DEFAULT_OUT[PLAN_NAME]));
 const FRAMES_DIR = join(OUT_DIR, 'frames');
@@ -225,6 +231,26 @@ const GALLERY_PLAN = [
   { to: 0.00 }, { pause: 10 },
 ];
 
+// Same page, same panel geometry, the OTHER branch of the decision: the panel
+// plays continuously instead of being tapped through. Nothing is clicked. The
+// required outcome is the opposite one — the panel is persistent dynamic noise,
+// so the session stays ONE page, no state of the panel is worth keeping, and the
+// panel must NOT be reported as a sequence of screens.
+// It deliberately does NOT scroll. Scrolling past a region that is animating is a
+// different problem with its own fixture (session_hostile, the M5 lesson): the
+// viewport-space noise mask cannot follow a region that moves, so the animation
+// poisons the scroll veto. Measured on a version of this plan that did scroll:
+// the host document fractured into 3 pages instead of 1, for that reason and not
+// for anything to do with the subframe decision. Keeping the plan still isolates
+// the axis under test — the same region, tapped or playing.
+const GALLERY_VIDEO_PLAN = [
+  { pause: 10 },
+  { toEl: '#panel', at: 150 },     // scroll it into view while it is still
+  { pause: 12 },
+  { clickLocal: '#panel-next' },   // ...and only then start it playing
+  { pause: 480 },                  // ~16s of churn at 30fps playback
+];
+
 // Revisit plan (Milestone-4 fixture): the session returns to a page it has
 // already seen — via HISTORY BACK — and then scrolls further, extending the
 // coverage its first visit left behind.
@@ -379,7 +405,7 @@ async function captureSettledReference(pageHeight) {
 
 // ── Plan: single (schema unchanged — the stitch benchmark consumes it) ───────
 async function runSingle(plan) {
-  const gt = await loadPage('file://' + PAGE_FILE);
+  const gt = await loadPage('file://' + PAGE_FILE + (FRAGMENT[PLAN_NAME] || ''));
   const maxScrollY = gt.page.maxScrollY;
   console.log(`page: ${PAGE_FILE}`);
   console.log(`viewport ${VIEWPORT_W}×${VIEWPORT_H} | pageHeight ${gt.page.pageHeight}px | maxScrollY ${maxScrollY}px`);
@@ -464,12 +490,13 @@ async function runSession(plan) {
                    // the scorer can require that no fixed overlay is claimed
                    // there — the failure mode when in-place change is mistaken
                    // for a fixed video ad.
-                   ...(gt.mutatingRegion ? { mutatingRegion: gt.mutatingRegion } : {}) });
+                   ...(gt.mutatingRegion ? { mutatingRegion: gt.mutatingRegion } : {}),
+                   taps: 0 });   // filled below: clicks that mutated this page
     }
     return { idx: pageIndexByFile.get(file), gt };
   };
 
-  let gt = await loadPage('file://' + PAGE_FILE);
+  let gt = await loadPage('file://' + PAGE_FILE + (FRAGMENT[PLAN_NAME] || ''));
   let pageIdx = (await registerPage()).idx;
   let curY = 0;
   visits.push({ page: pageIdx, firstFrame: 0, lastFrame: -1, arrivedBy: 'initial' });
@@ -556,6 +583,7 @@ async function runSession(plan) {
       await call('Input.dispatchMouseEvent', { type: 'mousePressed',  x: c.x, y: c.y, button: 'left', clickCount: 1 });
       await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', clickCount: 1 });
       events.push({ type: 'mutation', selector: step.clickLocal, frame: triggerFrame });
+      pages[pageIdx].taps = (pages[pageIdx].taps || 0) + 1;
       console.log(`mutation ${step.clickLocal} @frame ${triggerFrame} (same page)`);
       await sleep(SETTLE_MS * 3);   // let the mutation render
       continue;
@@ -586,6 +614,9 @@ async function runSession(plan) {
   // real footer takes its place. A settled full-page reference therefore makes
   // the question "does the stitch show the settled page, or a transient early
   // appearance frozen in?" measurable by the existing ghost metric.
+  // No settled reference for gallery_video: its panel is different in every
+  // frame, so there is no settled appearance to compare a stitch against, and the
+  // fixture is scored on the subframe decision instead.
   if ((PLAN_NAME === 'cookie' || PLAN_NAME === 'gallery') && pages.length === 1)
     await captureSettledReference(pages[0].pageHeight);
 
@@ -597,6 +628,10 @@ async function runSession(plan) {
     fps: FPS,
     jpegQuality: JPEG_QUALITY,
     frameCount: frames.length,
+    // Regions whose pixels are unpredictable frame to frame. The ghost metric
+    // reads this at the top level, so it has to travel with the session, not
+    // only with the page.
+    dynamicRegions: gt.dynamicRegions || [],
     pages,
     visits,
     events,
@@ -627,6 +662,7 @@ try {
   else if (PLAN_NAME === 'revisit_noscroll') await runSession(REVISIT_NOSCROLL_PLAN);
   else if (PLAN_NAME === 'cookie')           await runSession(COOKIE_PLAN);
   else if (PLAN_NAME === 'gallery')          await runSession(GALLERY_PLAN);
+  else if (PLAN_NAME === 'gallery_video')    await runSession(GALLERY_VIDEO_PLAN);
   else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
   else if (PLAN_NAME === 'jumps')            await runSingle(JUMPS_PLAN);
   else if (PLAN_NAME === 'fling')            await runSingle(FLING_PLAN);

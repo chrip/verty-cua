@@ -14,8 +14,12 @@ class SessionReport {
 public:
     // stitch_paths[i] = output image written for pages()[i].
     // Returns false if the file could not be written.
+    // subframe_state_paths[i][j] = image written for subframes()[i].states[j],
+    // empty where nothing was written (a subframe classified as dynamic noise
+    // keeps no state).
     static bool write(const std::string& path,
                       const std::string& video_path,
                       const SessionProcessor& session,
-                      const std::vector<std::string>& stitch_paths);
+                      const std::vector<std::string>& stitch_paths,
+                      const std::vector<std::vector<std::string>>& subframe_state_paths = {});
 };

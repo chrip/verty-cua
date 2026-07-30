@@ -33,7 +33,8 @@ std::string escape(const std::string& s)
 bool SessionReport::write(const std::string& path,
                           const std::string& video_path,
                           const SessionProcessor& session,
-                          const std::vector<std::string>& stitch_paths)
+                          const std::vector<std::string>& stitch_paths,
+                          const std::vector<std::vector<std::string>>& subframe_state_paths)
 {
     std::ofstream out(path);
     if (!out) return false;
@@ -52,7 +53,12 @@ bool SessionReport::write(const std::string& path,
     // where the scrollbar was legible the real height is stated next to it with
     // its own uncertainty.
     // (schema 2 added pages[].gaps and visits[].vtUncertaintyPx.)
-    out << "  \"schema\": 3,\n";
+    // schema 4 adds subframes[]: regions that changed while the document did
+    // not, each classified by whether it ever held still (see
+    // subframe_tracker.hpp). A "screenflow" carries its settled states as
+    // separate images with their own position in the frame; "noise" carries none,
+    // because a playing video has no state worth keeping.
+    out << "  \"schema\": 4,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -129,6 +135,41 @@ bool SessionReport::write(const std::string& path,
         out << "]}" << (i + 1 < pages.size() ? "," : "") << "\n";
     }
     out << "  ],\n";
+
+    // ── Subframes ────────────────────────────────────────────────────────────
+    // A bounded region that changed while the document around it did not. Its
+    // position is given in FRAME coordinates, which is what a consumer needs to
+    // lay a state back over the page it came from; a state's own image is exactly
+    // that rectangle, so no scaling is implied.
+    out << "  \"subframes\": [";
+    const auto& subs = session.subframes();
+    for (size_t i = 0; i < subs.size(); ++i) {
+        const auto& sf = subs[i];
+        out << (i ? ",\n    " : "\n    ")
+            << "{\"rect\": {\"x\": " << sf.rect.x << ", \"y\": " << sf.rect.y
+            << ", \"w\": " << sf.rect.width << ", \"h\": " << sf.rect.height << "}, "
+            << "\"kind\": \"" << (sf.is_screenflow() ? "screenflow" : "noise") << "\", "
+            << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
+            << "\"settledStates\": " << sf.states.size() << ", \"states\": [";
+        if (sf.is_screenflow()) {
+            for (size_t k = 0; k < sf.states.size(); ++k) {
+                const auto& st = sf.states[k];
+                const bool have = i < subframe_state_paths.size()
+                                  && k < subframe_state_paths[i].size()
+                                  && !subframe_state_paths[i][k].empty();
+                out << (k ? ", " : "")
+                    << "{\"frame\": " << st.frame
+                    << ", \"t\": " << std::format("{:.3f}", st.t)
+                    << ", \"heldFrames\": " << st.dwell
+                    << ", \"rect\": {\"x\": " << st.box.x << ", \"y\": " << st.box.y
+                    << ", \"w\": " << st.box.width << ", \"h\": " << st.box.height << "}"
+                    << ", \"image\": " << (have ? "\"" + escape(subframe_state_paths[i][k]) + "\"" : "null")
+                    << "}";
+            }
+        }
+        out << "]}";
+    }
+    out << (subs.empty() ? "" : "\n  ") << "],\n";
 
     // ── Navigations ──────────────────────────────────────────────────────────
     out << "  \"navigations\": [";

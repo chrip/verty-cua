@@ -41,6 +41,12 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
 
     FixedAccumulator   chrome(frame_w_, frame_h_);
     DynamicAccumulator noise(frame_w_, frame_h_);
+    // Subframes are measured on the FIRST pass only: the second pass exists to
+    // re-classify with the noise mask seeded, and the question this tracker asks
+    // — did a bounded region hold still after changing — is about the recording,
+    // not about how the classifier reads it.
+    const bool track_subframes = seed_noise.empty();
+    SubframeTracker subframes(frame_w_, frame_h_, fps_, verbose_);
     noise.seed(seed_noise);                       // pass 2: ad already known
     cv::Mat chrome_mask, noise_mask = noise.mask();
 
@@ -55,6 +61,9 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
                                              chrome_mask, noise_mask);
         counts_.add(tr.type);
         transitions.push_back(tr);
+        if (track_subframes)
+            subframes.observe(f.index, prev_gray, curr_gray,
+                              tr.type == TransitionType::Scroll);
 
         switch (tr.type) {
         case TransitionType::Scroll:
@@ -89,6 +98,26 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
         prev_gray = curr_gray.clone();
     }
     noise_mask_ = noise_mask;
+    if (track_subframes) {
+        subframes.finish();
+        // One more sequential walk, and only when there is a screen flow to
+        // photograph: its states are single frames scattered through the video, so
+        // seeking to each would decode most of it several times over.
+        const std::vector<long> want = subframes.state_frames_needed();
+        if (!want.empty()) {
+            VideoSource src(video_path_);
+            VideoSource::Frame g;
+            size_t next = 0;
+            while (next < want.size() && src.next(g)) {
+                while (next < want.size() && want[next] < g.index) ++next;
+                if (next < want.size() && want[next] == g.index) {
+                    subframes.set_state_image(g.index, g.bgr);
+                    ++next;
+                }
+            }
+        }
+        subframes_ = subframes.subframes();
+    }
     if (scrollbar_) scrollbar_->locate();
     return transitions;
 }

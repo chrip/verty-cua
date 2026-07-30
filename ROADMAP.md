@@ -1229,6 +1229,82 @@ this page reload" or "did the viewport jump inside it" — and those are decided
 different thresholds today. `IDENT_ENTRY_FRAMES` is left at 1 until that is
 understood.
 
+### Subframes: a changed region is reported, not resolved — 2026-07-30
+
+The previous sections end at a wall: an embedded screen flow and a playing video
+ad are the same event to a document model — "the page did not move but some of it
+is different" — and four different pixel-temporal statistics fail to separate
+them. What breaks the wall is a rule about behaviour rather than pixels, proposed
+after seeing the gallery fixture: **if the region settles and holds, its states are
+content; if it never holds still, it is noise.** Measured, per region, as the share
+of in-place changes followed by a dwell of at least four transitions:
+
+| region | in-place changes | dwell median | settled |
+|---|---|---|---|
+| lab fixture, animated panel | 300 | **0** | **0%** |
+| corpus, fixed video ad | 18 | **0** | **0%** |
+| real embedded phone screen (2 sessions) | 93 / 116 | 0 / 0 | **31% / 39%** |
+| lab fixture, panel tapped 30 times | 30 | 17 | **100%** |
+
+(The flows' dwell medians are 0 because a tap animates over two or three frames
+before it lands; what matters is that a third of their changes are followed by a
+real pause, and none of the ad's are.)
+
+**The two lab fixtures differ in nothing else.** `--plan gallery` taps the panel 30
+times; `--plan gallery_video` loads the same page with `#video`, which turns the
+same 320×260 panel at the same position into a canvas that repaints every frame.
+Same document, same geometry, same plan shape — one axis. The video plan starts the
+animation on the button rather than on load, deliberately: scrolling past something
+that is animating is a DIFFERENT problem with its own fixture (the M5 lesson — the
+noise mask lives in viewport space and cannot follow a region that moves), and
+measured on a version that played while scrolling, the host document fractured into
+3 pages instead of 1 and lost 7 scroll events. That is a real limitation, recorded
+here, not something this fixture should be re-testing.
+
+**What the tracker reports** (`src/subframe_tracker.*`, one pass, no extra decode):
+regions that changed while the document did not, each with its rectangle in frame
+coordinates, its in-place change count, and — if it settled at least three times —
+one image per settled state, written as its own file. A state's image is the whole
+subframe rectangle, not the box that happened to repaint: one tap replaces all of a
+panel and the next only its body, so cropping what changed hands back inconsistent
+fragments of the same region. Detection details that cost measurements to get right:
+
+- **Components, not a bounding box.** A bounding box spans everything that changed
+  at once, so a screen swap that also repaints a button 1200px away reads as one
+  1550px-wide region — measured on a real recording, where it merged an embedded
+  phone screen with the host page's buttons.
+- **Grouping by overlap RATIO, not by touching.** A chain of touching boxes
+  swallows the viewport: measured, one group grew to 1800×956 of a 1918×956 frame.
+- **A size floor.** Without it, every text block of a page that reloads its own
+  content qualifies: 79 candidate regions of 0.3-3% of the frame on the
+  auto-refreshing news portal. The regions this is for are 7-18%.
+- **Attribution by containment.** By overlap ratio, an embedded phone screen kept
+  2 of its 29 settled states, because its changes have wildly different shapes.
+- **Three states, not two.** The hostile fixture's animated region happens to hold
+  still twice in 204 frames.
+
+**What it produces on the corpus.** rw1's fixed video ad: 151 in-place changes,
+**0 settled states, noise** — and its auto-refreshing article teasers: 4 and 7
+settled states, reported as screen flows, which is what that page does. rw2 and
+rw4 (plain scrolling documents): no subframes at all. rw5's phone mockup: **13
+states**, against the 19 stitches production emitted for it. The embedded-prototype
+recording that started all of this: **17 states**, each individually legible — home
+screen, Wallet, NFC payment, bank login, registration, TAN confirmation, video
+identification, consent screen, "card being created", Google Pay, card ready.
+
+**Schema 4** adds `subframes[]`. Position is given in frame coordinates because
+that is what a consumer needs to lay a state back over the page it came from, and a
+state's image is exactly that rectangle, so no scaling is implied. Nothing else in
+the report changed, no existing behaviour changed, and all 18 sessions PASS with
+every previous `totalError` and ghost score identical.
+
+**Not done, and next:** the states of a subframe that SCROLLS internally are still
+single frames, not a stitch. The pipeline already has everything needed to run on a
+sub-rectangle's frame stream — transitions, offsets, reconciliation — so the honest
+next step is recursion: verty on the subframe, producing one tall stitch per state
+that scrolled. That is also what would finally give the embedded-phone case its
+full-page screens rather than viewport-sized ones.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

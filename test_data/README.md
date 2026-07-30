@@ -220,6 +220,36 @@ It fails on the code that preceded it, in three independent ways:
   (`SCROLL_MIN_CHANGED_BAND_FRAC`). Baseline after the fix: `dyErrorSum` **0px**,
   176/176 scroll events, height exact, ghost madMean 3.07 / badBlocks 0.98%.
 
+### The other branch: the same panel, playing (2026-07-30)
+
+```bash
+node record_session.mjs --plan gallery_video          # → session_gallery_video/
+python3 frames_to_mp4.py session_gallery_video
+```
+
+The same page loaded with `#video`, which turns the same 320×260 panel at the same
+position into a canvas that repaints every frame. Nothing is tapped. It exists so
+the subframe decision — *does this region ever hold still* — is testable in both
+directions on one axis:
+
+| | in-place changes | settled states | verdict |
+|---|---|---|---|
+| `--plan gallery` (30 taps) | 40 | **30** | screen flow, states kept |
+| `--plan gallery_video` | 381 | **0** | dynamic noise, nothing kept |
+
+Both are asserted from the ground truth, which declares the panel as a
+`mutatingRegion` in one plan and an `animated` `dynamicRegion` in the other:
+`page0.mutRegionIsScreenflow` + `page0.mutRegionStates` (against the recorded tap
+count) and `page0.animatedRegionIsNoise` + `page0.animatedRegionStates`.
+
+The animation starts on the button, not on load, so the plan can scroll the panel
+into view while it is still. Scrolling past something that is animating is a
+different problem with its own fixture (`session_hostile`, the M5 lesson): the
+noise mask lives in viewport space and cannot follow a region that moves. Measured
+on a version of this plan that played while scrolling: the host document fractured
+into 3 pages instead of 1 and lost 7 of 46 scroll events. Keeping the plan still is
+what makes this fixture about one thing.
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit

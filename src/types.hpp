@@ -176,6 +176,55 @@ constexpr double DYNAMIC_MIN_CHANGE_RATE = 0.10;
 // frame (safety against runaway accumulation).
 constexpr double DYNAMIC_MASK_MAX_FRACTION = 0.4;
 
+// ── Subframes: a bounded region that changes while the document does not ────
+// An embedded prototype, a gallery, a tab switcher, a playing video ad. See
+// subframe_tracker.hpp for why the only usable separator is whether the region
+// ever HOLDS STILL, and for the measurements behind these numbers.
+//
+// Minimum changed pixels for a transition to count as a change of a region at
+// all. Measured over the corpus: a moving cursor, a blinking caret or a hover
+// highlight change 100-5000 px, while the smallest genuine screen swap in the
+// real recordings changed 10112. Duplicate frames change exactly 0 (video
+// encoders emit identical frames during a pause, on every real recording
+// measured).
+constexpr int    SUBFRAME_MIN_CHANGED_PX = 5000;
+// A subframe is BOUNDED. A real navigation repaints the whole viewport; the
+// corpus's largest genuine subframe is a fixed video ad at 31% of the frame,
+// and an embedded phone screen is 12%.
+constexpr double SUBFRAME_MAX_AREA_FRAC  = 0.60;
+// Transitions a region must hold perfectly still for, after changing, for that
+// appearance to count as a STATE somebody could have looked at. Measured share
+// of in-place changes that reach it: lab animated panel 0%, corpus video ad 0%,
+// real embedded phone screens 31% and 39%, lab panel tapped 30 times 100%.
+constexpr int    SUBFRAME_SETTLE_FRAMES  = 4;
+// Settled states that make a region a SCREEN FLOW rather than noise. Two is not
+// enough: the lab hostile fixture's animated region happens to hold still twice in
+// its 204 frames and would qualify on two. Three is the smallest number that
+// separates it from the flows measured (lab panel 30, embedded phone screens 19
+// and 21) — and a sequence of screens worth keeping has at least three.
+constexpr int    SUBFRAME_MIN_STATES     = 3;
+// In-place changes below which a region is a one-off, not a subframe — a cookie
+// banner closing changes once and must not be reported as a sequence of screens.
+constexpr int    SUBFRAME_MIN_CHANGES    = 3;
+// Overlap ratio (intersection over union) at which a change belongs to a subframe
+// already seen. Grouping by "do the boxes touch" instead chains adjacent changes
+// until one group covers the viewport — measured, one grew to 1800×956 of a
+// 1918×956 frame. A ratio keeps a gallery and a ticker apart while tolerating the
+// jitter of which part of a region repainted.
+constexpr double SUBFRAME_MIN_IOU        = 0.35;
+// Smallest share of the frame a subframe may be. Without it, every text block of
+// a page that reloads its own content qualifies — measured on the auto-refreshing
+// news portal: 79 candidate regions of 0.3-3% of the frame, several with two
+// settled states each. The regions this is for are an order larger: the lab panel
+// is 7% of its frame, an embedded phone screen 12%, a fixed video ad 18%.
+constexpr double SUBFRAME_MIN_AREA_FRAC  = 0.05;
+// How much of a box must lie inside a region to belong to it. A screen swap
+// repaints all of its region on one tap and a corner of it on the next, so its
+// changes have wildly different shapes: attribution has to be containment, not
+// overlap ratio (measured: by ratio, an embedded phone screen kept 2 of its 29
+// settled states).
+constexpr double SUBFRAME_CONTAINED_FRAC = 0.70;
+
 // ── Vertical scrollbar: absolute-offset evidence for unexplained jumps ───────
 // A user DRAGGING the scrollbar thumb (or flinging) moves the document by
 // thousands of pixels between two frames — measured on rw4_portal: 4356px in

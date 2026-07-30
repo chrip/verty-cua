@@ -1,4 +1,6 @@
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <chrono>
 #include <format>
@@ -63,6 +65,18 @@ static std::string page_output_path(const std::string& base, size_t page, size_t
     return named.string();
 }
 
+// out.png → out_sub0_state00.png. Numbered, not named, because a state has no
+// name the pixels can supply — its identity is its position in the sequence.
+std::string subframe_output_path(const std::string& base, size_t sub, size_t state)
+{
+    fs::path p(base);
+    const std::string stem = p.stem().string();
+    const std::string ext  = p.extension().empty() ? ".png" : p.extension().string();
+    std::ostringstream name;
+    name << stem << "_sub" << sub << "_state" << std::setfill('0') << std::setw(2) << state << ext;
+    return (p.parent_path() / name.str()).string();
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[])
 {
@@ -90,8 +104,33 @@ int main(int argc, char* argv[])
         stitch_paths.push_back(path);
     }
 
+    // ── Subframe states ──────────────────────────────────────────────────────
+    // A screen flow's states are written as their own files rather than composed
+    // into the page: they are mutually exclusive appearances of the same
+    // rectangle, so there is no single image that shows them all, and a consumer
+    // that wants to lay them back over the page has their frame position in the
+    // report.
+    std::vector<std::vector<std::string>> subframe_state_paths;
+    for (size_t i = 0; i < session.subframes().size(); ++i) {
+        const auto& sf = session.subframes()[i];
+        subframe_state_paths.emplace_back();
+        if (!sf.is_screenflow()) continue;
+        for (size_t k = 0; k < sf.states.size(); ++k) {
+            const std::string p = subframe_output_path(args.output, i, k);
+            if (sf.states[k].image.empty() || !cv::imwrite(p, sf.states[k].image)) {
+                std::cerr << "[main] failed to write: " << p << "\n";
+                return 1;
+            }
+            subframe_state_paths.back().push_back(p);
+        }
+        std::cout << "[main] subframe " << i << ": " << sf.states.size()
+                  << " states → " << fs::absolute(subframe_output_path(args.output, i, 0))
+                  << " …\n";
+    }
+
     if (!args.report.empty()) {
-        if (!SessionReport::write(args.report, args.input, session, stitch_paths)) {
+        if (!SessionReport::write(args.report, args.input, session, stitch_paths,
+                                  subframe_state_paths)) {
             std::cerr << "[main] failed to write report: " << args.report << "\n";
             return 1;
         }
