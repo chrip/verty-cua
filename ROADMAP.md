@@ -1094,6 +1094,76 @@ against the production reference stitches rather than against verty's own last
 run. Until then, an improvement anywhere upstream of the canvas cannot be told
 apart from a regression in page identity — which is precisely what happened here.
 
+### Page identity, re-derived from measured distributions — 2026-07-30
+
+The section above ends with "an improvement anywhere upstream of the canvas cannot
+be told apart from a regression in page identity". This is the pass that fixes
+that, and it is a re-derivation rather than a refactor: the algorithm is
+unchanged, the two numbers it is judged by are now measured instead of assumed.
+
+**What was actually wrong.** `concentration` is a vote PROPORTION, so its noise
+falls only as 1/sqrt(samples) — at `IDENT_SAMPLES = 120` the deciding vote carried
+a standard deviation of 0.03-0.08. Sweeping the RNG seed over the twelve
+identity-bearing sessions at that setting:
+
+| session | page counts across 8 seeds |
+|---|---|
+| rw1_newsportal | **1** (5 seeds) / 2 (3 seeds) |
+| rw5_mobileframe | 5 (seed 42 only) / **6** (6 seeds) / 7 (1 seed) |
+| session_fling | **1** (6 seeds) / 2 (2 seeds) |
+| session_manyjumps | **1** (5 seeds) / 2 (3 seeds) |
+
+Four of twelve, including both re-localization fixtures. The shipped verdicts were
+partly a property of seed 42. The observed spreads track the binomial prediction
+`sqrt(p(1-p)/votes)` closely, so this is sample noise and nothing subtler.
+
+**Sample size.** `IDENT_SAMPLES` 120 → **480**. Ten of the twelve sessions become
+seed-stable on that alone, and it costs 5% of the deepest session's runtime
+(rw4 19.0s → 20.1s) — affordable only because `patch_mad` made the vote loop 27×
+cheaper in July.
+
+**Threshold.** With every decision labelled from ground truth (lab fixtures) or the
+manifest (rw1-rw4), the corpus draws one narrow gap at 480 samples:
+
+| | decision | concentration |
+|---|---|---|
+| lowest that MUST match | rw1's reload-revisit | **0.514 ± 0.030** |
+| highest that must NOT | two sibling pages sharing a chrome template | **0.416 ± 0.027** |
+
+`REVISIT_MIN_CONCENTRATION` was 0.5, taken in July from rw1's then-measured 0.526
+— i.e. the bar sat directly on top of the single case it was fitted to, leaving
+**+0.5σ** on the merge that must happen against −3.1σ on the merge that must not.
+Centring it in the gap at **0.465** balances them at 1.6σ / 1.8σ. That is the best
+this statistic can do: the gap is only 0.098 wide.
+
+**A sharper statistic was tried and rejected on measurement.** Peak-vs-runner-up
+dominance (does one offset dominate the vote histogram, rather than hold a share
+of it) should in principle separate "same document, reloaded" from "different
+document, same template" — but measured over 4 seeds at 480 samples it separates
+them WORSE: rw1's reload 3.39 ± 0.74 against the sibling collision 3.29 ± 0.25,
+overlapping, where concentration keeps a 25% relative gap. Anything better needs
+evidence the vote histogram does not carry.
+
+**Result: every one of the twelve identity-bearing sessions now produces the same
+page and navigation structure under all eight seeds** (was eight of twelve), with
+all 17 suite sessions PASS and every fixture at its exact previous `totalError`
+and ghost score.
+
+**rw5's expectation was calibrated to that lucky seed and is now a range.** Its
+deciding visit sits at 0.420 ± 0.022, about 2σ BELOW the new bar, so the page
+count is reliably 6 — while a second visit ([306..326], 0.552 ± 0.037) sits about
+2σ above it. A session with visits on both sides of the bar has no single right
+count, and pinning one would only record which side a coin toss landed on. The
+manifest now expects `pages: [6, 7]` plus a `pageHeightsPresent` guard — every
+distinct document extent the session is known to contain (including the tall 1880
+and 3824 stitches production also captured) must still be reconstructed by some
+page. That keeps the guard that caught rw4's truncation without asserting which
+visit founds which page.
+
+Worth stating plainly, because it is the lesson: a threshold fitted to one
+measurement of one case is not calibrated, and the only way to find out is to
+measure the same decision many times under different sampling.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

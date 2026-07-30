@@ -457,12 +457,31 @@ def score_realworld(report, session):
     if exp:
         heights = [p["capturedExtent"] for p in pages]
         checks["pagesExpected"] = exp["pages"]
-        checks["pagesMatch"]    = len(pages) == exp["pages"]
+        # `pages` is normally an exact count. A two-element list is an inclusive
+        # RANGE, for the one case whose page count is genuinely not determined by
+        # the algorithm (see the note in the manifest): pinning such a count to
+        # one number does not guard anything, it just records which side of a
+        # coin toss the last run landed on.
+        if isinstance(exp["pages"], list):
+            lo, hi = exp["pages"]
+            checks["pagesMatch"] = lo <= len(pages) <= hi
+        else:
+            checks["pagesMatch"] = len(pages) == exp["pages"]
         windows = exp.get("pageHeightRange") or []
+        checks["heightWindows"] = windows
         checks["heightsInRange"] = (
             len(windows) == len(heights)
             and all(lo <= h <= hi for h, (lo, hi) in zip(heights, windows)))
-        checks["heightWindows"] = windows
+        # With a page-count range, per-position windows cannot line up, so the
+        # guard becomes: every DISTINCT document extent the session is known to
+        # contain must still be reconstructed by some page. That is what catches
+        # a truncation (the rw4 failure this block exists for) without asserting
+        # which visit founds which page.
+        present = exp.get("pageHeightsPresent") or []
+        if present:
+            checks["heightWindows"] = present
+            checks["heightsInRange"] = all(
+                any(lo <= h <= hi for h in heights) for lo, hi in present)
         checks["pass"] = (checks["pass"] and checks["pagesMatch"]
                           and checks["heightsInRange"])
 

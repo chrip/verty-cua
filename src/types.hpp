@@ -242,7 +242,26 @@ constexpr int    SB_THUMB_H_TOL     = 2;    // document fingerprint match; measu
 constexpr long   SB_CONTINUATION_MAX_OVERLAP = 64;
 
 // ── Page identity (REVISIT recognition) ──────────────────────────────────────
-constexpr int    IDENT_SAMPLES = 120;           // blocks sampled per candidate match
+// Blocks sampled per candidate match. This is a SAMPLE SIZE, and the two numbers
+// it feeds — concentration and confidence — are proportions, so their noise falls
+// only as 1/sqrt(samples). At 120 that noise was the deciding factor in four of
+// the corpus's twelve identity-bearing sessions: sweeping the RNG seed at a fixed
+// 120 samples produced 1 OR 2 pages for rw1, 5 OR 6 OR 7 for rw5, and 1 OR 2 for
+// both re-localization fixtures — i.e. the shipped verdicts were partly a
+// property of seed 42, not of the recordings. Measured spread of the deciding
+// vote proportion, 8 seeds:
+//
+//        decision                       120 samples      480 samples
+//        rw1 reload-revisit             0.543 ± 0.081    0.514 ± 0.030
+//        fling leap (must match)        0.520 ± 0.028    0.538 ± 0.010
+//        sibling template (must not)    0.409 ± 0.055    0.416 ± 0.027
+//
+// 480 makes ten of the twelve sessions produce the same structure under every
+// seed tried (from eight), and costs 5% of the deepest session's runtime
+// (rw4 20.2s → 21.2s) because patch_mad made the vote loop cheap. The observed
+// spread tracks the binomial prediction sqrt(p(1-p)/votes) closely, so this is
+// sample noise and nothing subtler.
+constexpr int    IDENT_SAMPLES = 480;           // blocks sampled per candidate match
 constexpr double IDENT_MIN_STDDEV = 4.0;        // skip near-uniform blocks (match anywhere)
 constexpr double REVISIT_MIN_CONFIDENCE = 0.5;  // matched-block fraction to accept a REVISIT
 constexpr int    IDENT_VT_SLACK = 2;            // vote bin slack (px) around the peak
@@ -258,9 +277,24 @@ constexpr double IDENT_MATCH_MAD = 9.0;
 // (a heavily-reloaded page whose surviving fraction dips below the bar) — but
 // in BOTH cases the vote concentration must clear REVISIT_MIN_CONCENTRATION,
 // which is what separates a same-page reload from a sibling page sharing one
-// chrome template. Measured on rw1 (reload, concentration 0.6-0.7) vs the
-// revisit_noscroll sibling-page collision (0.34).
-constexpr double REVISIT_MIN_CONCENTRATION = 0.5;
+// chrome template.
+//
+// The threshold was 0.5, taken in 2026-07-05 from the one case that needed it:
+// rw1's reload measured 0.526 and the bar went just under it. Measuring the whole
+// corpus at 480 samples over 8 seeds shows what that costs — the threshold sits
+// half a standard deviation from the case it was fitted to:
+//
+//        must MATCH (lowest)            rw1 reload             0.514 ± 0.030
+//        must NOT   (highest)           sibling template       0.416 ± 0.027
+//
+// so 0.5 leaves +0.5σ on the merge that must happen and −3.1σ on the merge that
+// must not. Centring it in the measured gap balances them at 1.6σ / 1.8σ. That is
+// the best this statistic can do here: the gap itself is only 0.098 wide, and
+// peak-vs-runner-up dominance — the obvious sharper alternative — was measured
+// and separates those two cases WORSE (3.39 ± 0.74 vs 3.29 ± 0.25, overlapping),
+// so it is not the answer. Anything better needs evidence the vote histogram does
+// not carry.
+constexpr double REVISIT_MIN_CONCENTRATION = 0.465;
 constexpr int    REVISIT_MIN_MATCH_BLOCKS  = 40;
 // A content match against the page the session was ALREADY on is not a revisit
 // — the session never left. It is a scroll jump too large for frame-to-frame

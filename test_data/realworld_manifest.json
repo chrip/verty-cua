@@ -258,8 +258,11 @@
     }
    ],
    "expect": {
-    "pages": 5,
-    "pageHeightRange": [
+    "pages": [
+     6,
+     7
+    ],
+    "pageHeightsPresent": [
      [
       975,
       1050
@@ -269,19 +272,11 @@
       1930
      ],
      [
-      960,
-      1030
-     ],
-     [
       3760,
       3870
-     ],
-     [
-      960,
-      1030
      ]
     ],
-    "note": "Mobile flow inside a phone mockup. Production emits 19 stitches under a HIGH sensitivity setting (a new document version per mutation); we merge revisits under Normal, so the count is deliberately not comparable — 5 is our measured baseline and this is a drift guard only. Caveat on the ORDER: most of the frame is the phone mockup itself, identical between screens, so which visit founds which page is sensitive to canvas content — the per-visit modal reconciliation (2026-07-28) regrouped two visits as revisits of page 0 without changing the count or the set of heights. Treat a reordering as a soft signal and an over/under count as hard."
+    "note": "Mobile flow inside a phone mockup. Production emits 19 stitches under a HIGH sensitivity setting (a new document version per mutation); we merge revisits under Normal, so the count is deliberately not comparable. It used to be pinned at 5, which was wrong for a reason worth recording: 5 required the identity vote's concentration for visit [71..144] to land at 0.516, and sweeping the RNG seed at the then-current 120 samples showed its true value is 0.44 +/- 0.04 — the 5-page baseline was an artefact of seed 42, and every other seed gave 6 or 7. At 480 samples the value is 0.420 +/- 0.022, below REVISIT_MIN_CONCENTRATION (0.465) by about 2 sigma, so the visit is now reliably its own page and the count is 6 — with one further visit ([306..326], 0.552 +/- 0.037) about 2 sigma the other side of the same bar, which is why the expectation is a RANGE and not a number. Most of the frame is the phone mockup itself, identical between screens, so this session has no pixel-only answer to 'is a changed subframe the same document'; what it can still guard is that no document extent goes missing, which is what pageHeightsPresent asserts (the tall 1880 and 3824 stitches production also captured). Treat an over/under count outside [6,7] as hard."
    }
   }
  ]
