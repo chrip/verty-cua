@@ -19,6 +19,9 @@
      multipage  visit page 1, scroll a little, hover a few links, click a link,
                 land on page 2 and stay there for a few seconds.  Defaults:
                 scroll_page.html → session_multipage/.
+     gallery    tap 30× through an embedded panel that swaps in place, then
+                scroll: punctuated in-place change vs. a video ad.
+                Defaults: scroll_page_gallery.html → session_gallery/.
      revisit    page 1 → scroll → click to page 2 → scroll → HISTORY BACK to
                 page 1 → scroll further (Milestone-4 fixture: recurring page).
                 Defaults: scroll_page.html → session_revisit/.
@@ -46,7 +49,7 @@ const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
 const PLANS = ['single', 'multipage', 'revisit', 'hostile',
                'noscroll', 'revisit_noscroll', 'cookie', 'jumps', 'fling',
-               'manyjumps'];
+               'manyjumps', 'gallery'];
 if (!PLANS.includes(PLAN_NAME)) {
   console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
@@ -57,9 +60,11 @@ const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
                        revisit_noscroll: 'session_revisit_noscroll',
                        cookie: 'session_cookie', jumps: 'session_jumps',
                        fling: 'session_fling',
-                       manyjumps: 'session_manyjumps' };
+                       manyjumps: 'session_manyjumps',
+                       gallery: 'session_gallery' };
 const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
-                       cookie:  'scroll_page_cookie.html' };
+                       cookie:  'scroll_page_cookie.html',
+                       gallery: 'scroll_page_gallery.html' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
 const OUT_DIR   = resolve(argv[1] || join(HERE, DEFAULT_OUT[PLAN_NAME]));
 const FRAMES_DIR = join(OUT_DIR, 'frames');
@@ -185,6 +190,39 @@ const COOKIE_PLAN = [
   { pause: 30 },
   { to: 0.35 }, { pause: 12 },          // then scroll a bit
   { to: 0.75 }, { pause: 12 },
+];
+
+// Gallery plan: the discriminator between an AD and a GALLERY.
+//
+// 30 taps on an embedded panel, each followed by an 18-frame reading pause, then
+// a scroll through the document. Every tap replaces the same 320×260 block, so
+// those pixels change 30 times without a scroll — past any absolute count — but
+// only in ~5.5% of the non-scroll transitions, which is where a human clicking
+// through a flow lives (measured 1.6–3.9% on real embedded-screen recordings)
+// and nowhere near a fixed video ad (measured 23.6%).
+//
+// The panel is tapped from a SCROLLED position, ~700px down the document, which
+// is what makes the failure show up in output pixels: a stitcher that reads the
+// panel as a viewport-fixed element cuts it out of every write and stamps it
+// once at a viewport row instead of at its document row.
+//
+// Required OUTCOME at normal sensitivity: ONE page, ZERO navigations (a panel
+// swap is a mutation, not a navigation — it spreads over ~0.37 of the non-chrome
+// bands, under the 0.5 gate), the full 1971px document captured, and no fixed
+// overlay claimed on the panel (`page0.mutRegionClaimedFixed`).
+//
+// The panel returns to screen 1 after 30 taps (30 = 10 × 3 screens), so the
+// state the settled reference shows is also the state most frames voted for,
+// and the ghost metric measures the stitch rather than which tap it froze.
+const GALLERY_PLAN = [
+  { pause: 10 },
+  { toEl: '#panel', at: 150 },   // scroll the panel into view: it is tapped ~1000px
+  { pause: 12 },                 // down the document, NOT at its viewport row
+  ...Array.from({ length: 30 }, () => [
+    { clickLocal: '#panel-next' }, { pause: 18 },
+  ]).flat(),
+  { to: 1.00 }, { pause: 12 },   // then cover the rest of the document
+  { to: 0.00 }, { pause: 10 },
 ];
 
 // Revisit plan (Milestone-4 fixture): the session returns to a page it has
@@ -420,7 +458,13 @@ async function runSession(plan) {
     if (!pageIndexByFile.has(file)) {
       pageIndexByFile.set(file, pages.length);
       pages.push({ file, pageHeight: gt.page.pageHeight, maxScrollY: gt.page.maxScrollY,
-                   fixed: gt.fixed, regions: gt.regions });
+                   fixed: gt.fixed, regions: gt.regions,
+                   // Where the page changes IN PLACE, if it declares such a
+                   // region. Nothing else on such a page is viewport-fixed, so
+                   // the scorer can require that no fixed overlay is claimed
+                   // there — the failure mode when in-place change is mistaken
+                   // for a fixed video ad.
+                   ...(gt.mutatingRegion ? { mutatingRegion: gt.mutatingRegion } : {}) });
     }
     return { idx: pageIndexByFile.get(file), gt };
   };
@@ -481,6 +525,17 @@ async function runSession(plan) {
       curY = await scrollTo(curY, targetY, scrollY => ({ page: pageIdx, scrollY }));
       continue;
     }
+    if (step.toEl) {
+      // Scroll so that `toEl` sits at viewport row `at`. Expressed against the
+      // element rather than a fraction of maxScrollY so the plan keeps meaning
+      // when the fixture's text changes its height.
+      const docY = await evaluate(
+        `Math.round(document.querySelector(${JSON.stringify(step.toEl)})`
+        + `.getBoundingClientRect().top + window.scrollY)`);
+      const targetY = Math.min(gt.page.maxScrollY, Math.max(0, docY - (step.at || 0)));
+      curY = await scrollTo(curY, targetY, scrollY => ({ page: pageIdx, scrollY }));
+      continue;
+    }
     if (step.hover) {
       const c = await elementCenter(step.hover);
       await moveMouse(c.x, c.y);
@@ -531,7 +586,7 @@ async function runSession(plan) {
   // real footer takes its place. A settled full-page reference therefore makes
   // the question "does the stitch show the settled page, or a transient early
   // appearance frozen in?" measurable by the existing ghost metric.
-  if (PLAN_NAME === 'cookie' && pages.length === 1)
+  if ((PLAN_NAME === 'cookie' || PLAN_NAME === 'gallery') && pages.length === 1)
     await captureSettledReference(pages[0].pageHeight);
 
   const meta = {
@@ -571,6 +626,7 @@ try {
   else if (PLAN_NAME === 'revisit')          await runSession(REVISIT_PLAN);
   else if (PLAN_NAME === 'revisit_noscroll') await runSession(REVISIT_NOSCROLL_PLAN);
   else if (PLAN_NAME === 'cookie')           await runSession(COOKIE_PLAN);
+  else if (PLAN_NAME === 'gallery')          await runSession(GALLERY_PLAN);
   else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
   else if (PLAN_NAME === 'jumps')            await runSingle(JUMPS_PLAN);
   else if (PLAN_NAME === 'fling')            await runSingle(FLING_PLAN);

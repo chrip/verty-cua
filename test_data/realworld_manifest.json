@@ -26,7 +26,7 @@
       4820
      ]
     ],
-    "note": "Single article. Measured 4735; the production JPG is 4737 (the manifest's 4744 and production's own reference are CAPTURED EXTENT, not document height — the scrollbar thumb puts this document at ~13000px and the user never scrolled that far). The page RELOADS itself mid-session; recognising the post-reload view as the same page is what keeps this at one page, so a drop to 2 pages is the regression this guards."
+    "note": "Single article. Measured 4735; the production JPG is 4737 (the manifest's 4744 and production's own reference are CAPTURED EXTENT, not document height — the scrollbar thumb puts this document at ~13000px and the user never scrolled that far). The page RELOADS itself mid-session; recognising the post-reload view as the same page is what keeps this at one page, so a drop to 2 pages is the regression this guards. The fixed video ad on this page is also the anchor for DYNAMIC_MIN_CHANGE_RATE: its pixels change in a median 23.6% of the non-scroll transitions they are observed in (p90 26.8%), against 1.6-3.9% for regions that only change when the user clicks (galleries, embedded screen flows). A drop to 2 pages here means the ad stopped being recognised as noise."
    }
   },
   {

@@ -42,6 +42,10 @@ public:
 
     // Pre-mature the counter to confirmed wherever `mask` is set, so a second
     // classification pass starts already knowing where the persistent noise is.
+    // Seeded pixels stay confirmed for the whole pass: they were established by
+    // a complete first pass, and re-deriving them from a partial rate as the
+    // second pass walks the video would un-confirm them for its early frames —
+    // which is the very thing the two-pass structure exists to avoid.
     void seed(const cv::Mat& mask);
 
     // Confirmed-noise mask (CV_8UC1, frame-sized), or an EMPTY Mat when the
@@ -49,6 +53,8 @@ public:
     [[nodiscard]] cv::Mat mask() const;
 
 private:
-    cv::Mat counter_;   // frame_h × frame_w, CV_32SC1
+    cv::Mat counter_;        // per-pixel non-scroll changes, CV_32SC1
+    cv::Mat seeded_;         // pixels confirmed by a previous pass (CV_8UC1)
+    long    observations_ = 0;   // non-scroll transitions fed to accumulate()
 };
 

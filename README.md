@@ -21,9 +21,10 @@ anything.
 > scroll offset), **intra-page re-localization of scroll jumps too large for
 > frame-to-frame matching** (flings, Page-Down chains, scrollbar-thumb drags),
 > scroll events with timestamps, anti-ghosting for animated regions and floating
-> fixed overlays, persistent-noise handling for fixed-position video ads, and a
-> machine-readable session report (`-r`, schema v2). All measured by a
-> reproducible benchmark: eleven recorded lab sessions plus five real screen
+> fixed overlays, persistent-noise handling that separates a fixed-position video
+> ad from a gallery or an embedded screen flow the user clicks through, and a
+> machine-readable session report (`-r`, schema 3). All measured by a
+> reproducible benchmark: twelve recorded lab sessions plus five real screen
 > recordings, scored by one command.
 >
 > Still a prototype: fixed-band edges carry a declared uncertainty (bands only
@@ -159,7 +160,7 @@ ground-truth scroll log. Every run is appended to
 comparable as the algorithm changes); the reconstructed image and the session
 report are archived under `test_data/session_page1/outputs/`.
 
-Current best: **`totalError` ≈ 99 px** — document width/height are near-exact;
+Current best: **`totalError` ≈ 106 px** — document width/height are near-exact;
 the remainder is intentional fixed-band over-detection (a deliberately harmless
 margin — details in [`test_data/README.md`](test_data/README.md)).
 

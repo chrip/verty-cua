@@ -355,6 +355,20 @@ def score_multipage(report, gt):
         rp = r_pages[i]
         check(f"page{i}.width", rp["width"], vw, T["widthPx"])
         check(f"page{i}.height", rp["capturedExtent"], seen_max + vh, T["heightPx"])
+        # A page that declares a MUTATING region (one that is replaced in place,
+        # over and over, while nothing scrolls) declares by the same token that
+        # the region is NOT viewport-fixed: it scrolls with the document. So a
+        # claimed fixed overlay of that region's shape is the specific failure
+        # this fixture exists to catch — in-place change read as a fixed video
+        # ad, its pixels excluded from every write and stamped once at a
+        # viewport row instead.
+        mut = gpage.get("mutatingRegion")
+        if mut:
+            claimed = sum(1 for o in rp.get("overlays", [])
+                          if abs(o["w"] - mut["width"]) <= 24
+                          and abs(o["h"] - mut["height"]) <= 24
+                          and abs(o["x"] - mut["x"]) <= 24)
+            check(f"page{i}.mutRegionClaimedFixed", claimed, 0, 0)
         if seen_max >= T["minScrollForFixed"]:
             bands = fixed_from_rects(rp["fixedRects"])
             gfix = gpage["fixed"]

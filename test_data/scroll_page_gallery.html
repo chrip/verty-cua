@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stitching Test Page — IN-PLACE PANEL (gallery / embedded screen flow)</title>
+<style>
+  /* Same chrome as scroll_page_cookie.html plus an embedded PANEL that swaps
+     its whole content in place, over and over, while nothing scrolls.
+     This is the shape of a gallery, a tab switcher, or — the case this fixture
+     was built for — a phone-screen recording embedded in a study page, tapped
+     through screen by screen.
+
+     Per PIXEL it is indistinguishable from a fixed-position video ad: the same
+     pixels change again and again without a scroll. What separates the two is
+     the RATE. An ad changes on nearly every non-scroll transition; a panel a
+     human clicks through changes once per click and then holds still for a
+     reading pause. So the panel's pixels cross any absolute change COUNT given
+     enough clicks, and stay far under a change RATE.
+
+     The fixture is dimensioned so both properties are unambiguous:
+       · 30 clicks  → over DYNAMIC_CONFIRM_FRAMES (25) with margin
+       · 18-frame dwells → ~5.5% change rate, well under
+         DYNAMIC_MIN_CHANGE_RATE (0.10) and inside the 1.6-3.9% measured on
+         real embedded-screen recordings
+       · panel 260px tall in a 900px viewport → the swap spreads over ~9 of the
+         ~24 bands that are not pure chrome (0.37), safely under
+         PAGE_CHANGE_MIN_SPREAD (0.5), so at normal sensitivity the session
+         stays ONE page (a mutation, not a navigation)
+       · the panel sits ~700px DOWN the document and is tapped from a scrolled
+         position, so a stitcher that mistakes it for a viewport-fixed element
+         stamps it at the wrong document row — the mistake is then visible in
+         the output pixels, not only in a log line
+       · 30 clicks / 3 screens → the panel ends on the screen it started with,
+         which is therefore also the screen the settled reference shows */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --header-h: 72px; --footer-h: 56px; --left-w: 240px; --right-w: 180px; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color: #1f2733; background: #eef1f5; line-height: 1.55; }
+
+  #site-header { position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
+    background: #33246b; color: #fff; display: flex; align-items: center; gap: 20px;
+    padding: 0 24px; z-index: 40; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+  #site-header .logo { font-weight: 700; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+  #site-header .logo .mark { width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg, #ffd166, #ef476f); }
+  #site-header nav { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+  #site-header nav a { color: #d5cbf2; text-decoration: none; }
+
+  #site-footer { position: fixed; bottom: 0; left: 0; right: 0; height: var(--footer-h);
+    background: #1b1330; color: #a99fc4; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 24px; font-size: 13px; z-index: 40; }
+
+  #left-sidebar { position: fixed; top: var(--header-h); bottom: var(--footer-h); left: 0;
+    width: var(--left-w); background: #2b2049; color: #ded7f0; padding: 18px 14px;
+    overflow: hidden; z-index: 30; }
+  #left-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #9a8dc0; margin-bottom: 12px; }
+  #left-sidebar div.item { padding: 10px 12px; border-radius: 6px; margin-bottom: 4px;
+    font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  #left-sidebar div.item .ico { width: 18px; height: 18px; border-radius: 4px; background: #52407e; }
+
+  #right-sidebar { position: fixed; top: var(--header-h); bottom: var(--footer-h); right: 0;
+    width: var(--right-w); background: #ffffff; border-left: 1px solid #ddd9e8;
+    padding: 18px 14px; overflow: hidden; z-index: 30; }
+  #right-sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #8a84a6; margin-bottom: 12px; }
+  #right-sidebar .widget { background: #f5f3fa; border: 1px solid #e6e2f0; border-radius: 8px;
+    padding: 12px; margin-bottom: 12px; font-size: 13px; color: #4a4560; }
+
+  #scroll-content { margin: var(--header-h) var(--right-w) var(--footer-h) var(--left-w);
+    padding: 24px 40px 60px; background: #ffffff;
+    min-height: calc(100vh - var(--header-h) - var(--footer-h)); }
+  #scroll-content h1 { font-size: 28px; margin-bottom: 6px; color: #1b1330; }
+  #scroll-content h2 { font-size: 22px; margin: 28px 0 10px; color: #33246b;
+    border-bottom: 2px solid #eae6f2; padding-bottom: 6px; }
+  #scroll-content p { margin-bottom: 14px; color: #333c47; }
+  .img-placeholder { width: 100%; height: 200px; border-radius: 8px; margin: 14px 0;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    font-size: 14px; font-weight: 600; background-color: #8f88b8;
+    background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.12) 0,
+      rgba(255,255,255,.12) 12px, transparent 12px, transparent 24px); }
+  .a { background-color: #6c76bf; } .b { background-color: #7aa06f; }
+
+  /* ── The panel: 260px tall, swapped in place, never animated ─────────────── */
+  #panel-row { display: flex; gap: 24px; align-items: flex-start; margin: 10px 0 18px; }
+  #panel { width: 320px; height: 260px; flex: none; border: 3px solid #241b3d;
+    border-radius: 14px; overflow: hidden; position: relative; }
+  #panel .bar { height: 44px; display: flex; align-items: center; padding: 0 12px;
+    font-size: 14px; font-weight: 700; }
+  #panel .body { height: 216px; padding: 12px; }
+  #panel .tag { position: absolute; right: 8px; bottom: 6px; font-size: 11px;
+    font-weight: 700; opacity: .8; }
+  #panel .row { height: 34px; border-radius: 6px; margin-bottom: 8px; }
+  #panel .tile { border-radius: 8px; }
+  #panel-next { padding: 10px 22px; border: 0; border-radius: 8px;
+    background: #33246b; color: #fff; font-size: 15px; font-weight: 700; }
+  #panel-note { font-size: 13px; color: #6c6483; margin-top: 10px; max-width: 320px; }
+</style>
+</head>
+<body>
+  <header id="site-header" data-region="header">
+    <span class="logo"><span class="mark"></span> ScreenFlow Study</span>
+    <nav><a href="#">Task</a><a href="#">Prototype</a><a href="#">Questions</a></nav>
+  </header>
+  <aside id="left-sidebar" data-region="left">
+    <h2>Study steps</h2>
+    <div class="item"><span class="ico"></span> Briefing</div>
+    <div class="item"><span class="ico"></span> Walkthrough</div>
+    <div class="item"><span class="ico"></span> Rating</div>
+    <div class="item"><span class="ico"></span> Debrief</div>
+  </aside>
+  <aside id="right-sidebar" data-region="right">
+    <h2>On this page</h2>
+    <div class="widget">Prototype</div>
+    <div class="widget">Notes</div>
+    <div class="widget">Fine print</div>
+  </aside>
+  <main id="scroll-content" data-region="scroll">
+    <h1>Walk Through the Prototype</h1>
+    <p>The prototype is embedded further down this page. Tap “Next screen” to
+      step through it; the page itself does not move while you do.</p>
+    <h2>1. Briefing</h2>
+    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+      tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+      veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+      commodo consequat. Duis aute irure dolor in reprehenderit in voluptate.</p>
+    <div class="img-placeholder a">STATIC IMAGE — 100% × 200</div>
+    <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut
+      fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem
+      sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor.</p>
+    <h2>2. The prototype</h2>
+    <div id="panel-row">
+      <div id="panel" data-region="panel"></div>
+      <div>
+        <button id="panel-next">Next screen</button>
+        <div id="panel-note">Each tap replaces the whole panel at once and then
+          nothing changes until the next tap — punctuated in-place change, not
+          an animation.</div>
+      </div>
+    </div>
+    <h2>3. How to report problems</h2>
+    <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem
+      accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab
+      illo inventore veritatis et quasi architecto beatae vitae dicta sunt.</p>
+    <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut
+      fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem
+      sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor.</p>
+    <div class="img-placeholder b">STATIC IMAGE — 100% × 200</div>
+    <h2>4. Fine print</h2>
+    <p>Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam
+      nihil molestiae consequatur, vel illum qui dolorem eum fugiat quo voluptas
+      nulla pariatur. Temporibus autem quibusdam et aut officiis debitis aut
+      rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint.</p>
+    <div class="img-placeholder a">STATIC IMAGE — 100% × 200</div>
+    <h2>5. Closing notes</h2>
+    <p>At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis
+      praesentium voluptatum deleniti atque corrupti quos dolores et quas
+      molestias excepturi sint occaecati cupiditate non provident. This marks
+      the bottom of the document.</p>
+  </main>
+  <footer id="site-footer" data-region="footer">
+    <span>© 2026 ScreenFlow Study — Test fixture</span>
+    <span>Fixed footer · always visible</span>
+  </footer>
+<script>
+// ── The three screens ────────────────────────────────────────────────────────
+// All THREE pairs are deliberately far apart in brightness and layout: each swap
+// must clear SAD_THRESHOLD (18) over most of the panel, and the whole-frame mean
+// must clear IDENTICAL_FRAME_MAD (2.0), or that transition would read as a
+// duplicate frame and the tap would test nothing. (Measured while building this:
+// a first version had screen 3 on white, so the 3→1 swap came in at frame mean
+// 1.81 and ten of the thirty taps were invisible.)
+const SCREENS = [
+  `<div class="bar" style="background:#0a84ff;color:#fff">Inbox</div>
+   <div class="body" style="background:#f2f5f8">
+     <div class="row" style="background:#dfe6ee"></div>
+     <div class="row" style="background:#dfe6ee"></div>
+     <div class="row" style="background:#dfe6ee"></div>
+     <div class="row" style="background:#dfe6ee"></div>
+     <div class="row" style="background:#dfe6ee"></div>
+   </div><div class="tag" style="color:#4a5b6e">SCREEN 1</div>`,
+
+  `<div class="bar" style="background:#101820;color:#ffd166">Player</div>
+   <div class="body" style="background:#1d2733">
+     <div class="tile" style="height:120px;background:#33414f"></div>
+     <div class="row" style="background:#2a3644;margin-top:14px"></div>
+     <div class="row" style="background:#2a3644"></div>
+   </div><div class="tag" style="color:#8fa1b5">SCREEN 2</div>`,
+
+  `<div class="bar" style="background:#0b7a4b;color:#fff">Checkout</div>
+   <div class="body" style="background:#0a2f22;display:grid;
+        grid-template-columns:1fr 1fr 1fr;grid-auto-rows:92px;gap:10px">
+     <div class="tile" style="background:#cdefdc"></div>
+     <div class="tile" style="background:#14503a"></div>
+     <div class="tile" style="background:#cdefdc"></div>
+     <div class="tile" style="background:#14503a"></div>
+     <div class="tile" style="background:#cdefdc"></div>
+     <div class="tile" style="background:#14503a"></div>
+   </div><div class="tag" style="color:#8fd6b4">SCREEN 3</div>`,
+];
+let screenIdx = 0;
+const panel = document.getElementById('panel');
+function render() { panel.innerHTML = SCREENS[screenIdx]; }
+render();
+document.getElementById('panel-next').addEventListener('click', () => {
+  screenIdx = (screenIdx + 1) % SCREENS.length;
+  render();                                   // instant, no transition
+});
+
+function r(n) { return Math.round(n * 100) / 100; }
+function docBox(el) {
+  const b = el.getBoundingClientRect();
+  return { x: r(b.left + window.scrollX), y: r(b.top + window.scrollY),
+           width: r(b.width), height: r(b.height) };
+}
+function pageMetrics() {
+  const doc = document.documentElement;
+  return { viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+           pageWidth: Math.max(doc.scrollWidth, doc.clientWidth),
+           pageHeight: Math.max(doc.scrollHeight, doc.clientHeight),
+           maxScrollY: Math.max(doc.scrollHeight - window.innerHeight, 0),
+           devicePixelRatio: window.devicePixelRatio };
+}
+function regions() {
+  const out = {};
+  document.querySelectorAll('[data-region]').forEach(el => {
+    out[el.getAttribute('data-region')] = docBox(el);
+  });
+  return out;
+}
+window.addEventListener('load', () => {
+  window.scrollTo(0, 0);
+  const reg = regions();
+  window.GROUND_TRUTH = {
+    page: pageMetrics(), regions: reg,
+    fixed: { headerHeight: reg.header.height, footerHeight: reg.footer.height,
+             leftWidth: reg.left.width, rightWidth: reg.right.width },
+    // The panel is where the punctuated in-place change happens: recorded so a
+    // scorer can say WHERE the change was, not just that there was some.
+    mutatingRegion: reg.panel,
+    screens: SCREENS.length,
+  };
+  console.log('[GROUND TRUTH]', window.GROUND_TRUTH);
+});
+</script>
+</body>
+</html>

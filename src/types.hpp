@@ -44,6 +44,22 @@ constexpr double PAGE_CHANGE_HIGH_SPREAD = 0.10;   // banner-close = 0.14 ⇒ sp
 // scrolls 0.081 and 0.909.
 constexpr double SCROLL_RESIDUAL_MEDIAN_MAX = 0.05;
 constexpr int    RESIDUAL_BAND_H = 32;   // band height (px) for the median
+// The residual can only be measured where something changed, so bands that did
+// not change are excluded from it — but for a nonzero dy they are not neutral.
+// Content moves through EVERY band, so a textured band that stayed put
+// contradicts the hypothesis, and a dy carried by a handful of changed bands is
+// carried by coincidence: two flat regions of the same shade agreeing across the
+// shift. Measured: an in-place panel swap 320px below a same-shade page header
+// produced a perfect median residual (0.000) at dy = −320 from 3 changed bands
+// out of 18 — on every one of ten repetitions.
+// So a minimum share of the informative bands must have changed. Measured over
+// 1232 true lab scrolls: worst 0.393 (|dy| ≤ 4px), median 0.64-0.87; over 213
+// true scrolls in the real corpus: worst 0.545, median 0.82-1.00. The false
+// panel swap sits at 0.167, so 0.30 has margin on both sides.
+// It also declines a genuine scroll INSIDE a subframe (an inner scrollable div),
+// which changes only its own bands. That is correct: an inner scroll is not a
+// document scroll, and counting it as one corrupts every offset after it.
+constexpr double SCROLL_MIN_CHANGED_BAND_FRAC = 0.30;
 
 // The stitched interior is cropped this many rows inside the detected
 // header/footer bands, for two reasons: (a) a band under-detected by a pixel
@@ -114,6 +130,24 @@ constexpr int GAP_MIN_ROWS = 8;
 // are excluded from the page-change spread and from the scroll veto's
 // evidence; they are NEVER used for detector sampling exclusion.
 constexpr int DYNAMIC_CONFIRM_FRAMES = 25;
+// ...but a COUNT alone conflates "changes often" with "the session is long". A
+// 2000-frame session in which the user taps through 40 screens crosses 25 just
+// as surely as a 124-frame session with an ad churning every frame, so the count
+// swallowed exactly the regions this project most needs to see: a gallery, a tab
+// switcher, a phone screen inside a subframe — punctuated in-place change, which
+// has the same per-pixel signature as an ad and none of its persistence.
+//
+// So a pixel must also change in a large enough SHARE of the non-scroll
+// transitions it was observed in. Measured per-pixel change rate inside the
+// region the count alone confirmed as noise: rw1's genuine fixed video ad
+// 23.6% (p90 26.8%), against 3.9% / 1.6% / 1.9% for three phone-flow sessions
+// (p90 at most 5.2%). 10% sits in the empty middle of that 6-15x gap.
+//
+// The rate also serves the original intent BETTER than the count did: a
+// scrolling animation dwells at one viewport position for a single reading pause
+// of <=18 frames, which is 4.5% of a 400-frame session — correctly not noise,
+// and it stays correct however long the session runs.
+constexpr double DYNAMIC_MIN_CHANGE_RATE = 0.10;
 // Ignore the noise mask entirely if it claims more than this fraction of the
 // frame (safety against runaway accumulation).
 constexpr double DYNAMIC_MASK_MAX_FRACTION = 0.4;

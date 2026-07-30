@@ -858,11 +858,122 @@ under exactly this kind of change. It would also move every session's numbers at
 once, so it needs its own measured pass — and rw5's 0.46-vs-0.5 margin should be
 understood before the thresholds are touched, not after.
 
+Second instance, measured 2026-07-30 while landing the noise-rate work: on a
+16-page desktop session outside the committed corpus, one visit's verdict flipped
+from REVISIT to a new page on `concentration 0.516949 → 0.483051` — a 0.034
+wobble across `REVISIT_MIN_CONCENTRATION` — while its confidence barely moved
+(0.940 → 0.944) and its matched-block count went UP (125 → 136). Nothing about
+that page changed; the visit boundaries were identical; the samples were redrawn.
+
 Side observation, deliberately NOT acted on: while a scrollbar is present a
 genuine fixed right SIDEBAR can no longer be detected, because `right_w_` counts
 contiguous fully-fixed columns inward from the edge and the bar's moving thumb
 stops that scan at the first column. No session in the corpus has both, so there
 is nothing to measure a fix against.
+
+### In-place change is not an ad: a rate, not a count — 2026-07-30
+
+Four new screen-flow recordings — a phone screen embedded in a survey page, the
+participant tapping through it — came out almost empty. All four confirmed
+175k-195k px of "persistent noise", and one of them then reported
+`identical 1245/1258, scroll 0, pageChange 3`: not a single scroll in 1258
+frames. The session's entire content — the thing being studied — had been
+classified as a video ad and erased from the record.
+
+The persistent-noise mask was built for one real case, rw1's fixed video ad, and
+its rule was an absolute COUNT: a pixel that changed during 25 non-scroll
+transitions is noise. That rule cannot tell "changes often" from "the session is
+long". A 2000-frame session in which somebody taps through 40 screens crosses 25
+just as surely as a 124-frame session with an ad churning every frame — and the
+regions it then swallowed are exactly the ones this project most needs to see: a
+gallery, a tab switcher, a subframe, an embedded phone screen. Punctuated
+in-place change has an ad's per-pixel signature and none of its persistence.
+
+**The fix is a rate.** A pixel is noise only if it changed in more than
+`DYNAMIC_MIN_CHANGE_RATE` (0.10) of the non-scroll transitions it was observed
+in, with the old count kept as an absolute floor. Measured per-pixel change rate
+inside the region the count alone confirmed as noise:
+
+| region the count called "persistent noise" | median change rate | p90 |
+|---|---|---|
+| rw1 — genuine fixed video ad | **23.6%** | 26.8% |
+| embedded phone-screen flow, session 1 | 3.9% | 5.2% |
+| embedded phone-screen flow, sessions 2 / 3 | 1.6% / 1.9% | ≤ 3.1% |
+
+10% sits in the empty middle of a 6-15× gap. The rate also serves the mask's
+ORIGINAL intent better than the count did: the M5 lesson that killed the first
+dynamic mask was that a *scrolling* animated element accumulates only for the
+length of one reading pause (≤ ~18 frames) before it moves on — which is 4.5% of
+a 400-frame session, correctly not noise, and it stays correct however long the
+session runs. Seeded pixels (pass 2 of `classify_transitions`) stay confirmed
+regardless of rate: a completed first pass established them, and re-deriving them
+from the second pass's partial counts would un-confirm them for its early frames.
+
+rw1 is unchanged by this — still one page, still 4736px captured, the ad still
+masked, same overlay rect, same transition tally — which was the constraint the
+change had to respect.
+
+**What it did to the recordings that prompted it.** Measured over 28 sessions of
+new material (two embedded-phone-screen studies, two desktop studies), before →
+after:
+
+| | pages per session | page-change transitions | scroll transitions |
+|---|---|---|---|
+| phone-screen study A (8 sessions) | 1-7 → **7-9** | 3-15 → 21-29 | 1-10 → 7-30 |
+| phone-screen study B (5 sessions) | 2 → **4-11** | 3 → 21-36 | **0 → 7-106** |
+| desktop studies (15 sessions) | unchanged in 12 of 15 | ±0-2 | ±0-9 |
+
+The DOM-based production system produced about 8 screenshots per session on the
+first study and 5 on the second, so the new page counts are in the right
+neighbourhood rather than merely larger. The second study is the sharper result:
+every one of its sessions had reported ZERO scroll transitions, because the mask
+covered the region that was actually moving.
+
+It costs ~3× runtime and ~2× peak RSS on those sessions — it is now stitching
+content it used to discard. The desktop sessions never confirmed a noise mask at
+all, so the rate gate cannot touch them; 12 of the 15 are identical page for page
+and pixel for pixel in captured extent. The three that moved were traced
+individually, because "12 of 15 unchanged" is not an argument about the other
+three:
+
+- one lost a spurious 4-frame visit, after which the next visit was recognised as
+  a CONTINUATION of page 0 (confidence 1) instead of becoming a new page — 4 pages
+  → 3, an improvement, caused by the veto gate;
+- one had a visit split at a transition the veto now classifies differently; its
+  two halves identify separately and the session's captured extent grows by 360px;
+- one is the `PageIdentifier` sampling knife edge with identical visit boundaries
+  (see the sample-dependence note above) — nothing to do with either gate.
+
+**A lab fixture, and the second bug it found.** `--plan gallery` taps an embedded
+320×260 panel 30 times with 18-frame dwells (5.5% rate, 30 > 25 count), from a
+scrolled position, with the panel ~700px down the document. On the previous code the panel was confirmed
+as noise and stamped once as a viewport-fixed overlay — and the fixture also
+truncated to 1457px of a 1971px document, which was not the noise mask at all:
+
+> On every screen-1→2 tap the scroll search proposed **dy = −320** and the veto
+> ACCEPTED it. The veto measures, per 32px band, how much of what changed is left
+> unexplained by the shift, and takes the median. Under dy = −320 the panel's
+> newly dark body landed on the same-shade page header 320px above, so two of the
+> three bands with any evidence came back perfectly explained — median 0.000, on
+> all ten repetitions. The other 15 bands had not changed and were treated as
+> neutral.
+
+They are not neutral. Content moves through *every* band, so a textured band that
+stayed put contradicts a nonzero dy. The veto now also requires
+`SCROLL_MIN_CHANGED_BAND_FRAC` (0.30) of the informative bands to have changed at
+all. Measured over 1232 true lab scrolls the worst case is 0.393 (at |dy| ≤ 4px)
+with medians 0.64-0.87; over 213 true scrolls in the real corpus the worst is
+0.545 with medians 0.82-1.00; the false panel swap sits at 0.167. The same gate
+declines a genuine scroll inside a SUBFRAME, which changes only its own bands —
+correct, because an inner scroll is not a document scroll and counting it as one
+corrupts every offset after it.
+
+With both gates the fixture is exact: `capturedExtent` 1971 of 1971, `dyErrorSum`
+**0px**, 176/176 scroll events, one page, zero navigations, no overlay claimed on
+the panel, ghost madMean 3.07 / badBlocks 0.98%. It fails on the previous code in
+three independent ways (height 1457, panel claimed fixed, ghost madMean 64.7), and
+still fails with the veto gate alone (panel claimed fixed) — so it guards both
+axes, not just the one that happened to be measured last.
 
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.

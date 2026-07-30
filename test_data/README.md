@@ -178,6 +178,48 @@ stitch in the suite stayed byte-identical). Each run's wall clock is printed and
 logged to `stitch_test_results.jsonl` as `elapsedSec`; it is never asserted,
 because it is machine-dependent.
 
+### In-place change: a gallery is not a video ad (2026-07-30)
+
+```bash
+node record_session.mjs --plan gallery              # → session_gallery/
+python3 frames_to_mp4.py session_gallery
+```
+
+An embedded 320×260 panel — a prototype screen flow, the lab stand-in for a
+phone-screen recording inside a study page — is tapped through **30 times**, each
+tap followed by an 18-frame reading pause, from a scrolled position ~1000px down
+the document. Then the session scrolls to the bottom and back to the top.
+
+Per pixel this is indistinguishable from a fixed-position video ad: the same
+pixels change again and again with no scroll. The separator is the **rate** —
+30 changes in ~550 non-scroll transitions is 5.5%, where the corpus's real ad
+sits at 23.6%. The fixture is dimensioned so that both the count (30 > the
+25-frame confirm threshold) and the rate (5.5% < 10%) are unambiguous, and so
+that the swap spreads over 0.37 of the non-chrome bands — under the 0.5
+page-change gate, so the session must stay **one page** with **zero
+navigations**.
+
+It fails on the code that preceded it, in three independent ways:
+
+| variant | capturedExtent (truth 1971) | panel claimed viewport-fixed | ghost madMean |
+|---|---|---|---|
+| before | 1457 | yes | 64.7 |
+| rate gate missing only | 1971 | yes | 4.5 |
+| both gates | **1971** | **no** | **4.5** |
+
+- `page0.mutRegionClaimedFixed` is a new check: a page whose ground truth
+  declares a `mutatingRegion` declares by the same token that the region is not
+  viewport-fixed, so a claimed fixed overlay of that shape is the failure being
+  guarded — in-place change read as an ad, its pixels excluded from every write
+  and stamped once at a viewport row.
+- The 1457px truncation was a second bug the fixture uncovered: on every
+  screen-1→2 tap the scroll search proposed dy = −320 and the veto ACCEPTED it,
+  because the newly dark panel body happened to match the same-shade page header
+  320px above — a clean median residual computed from 3 changed bands out of 18.
+  The veto now also requires a minimum share of informative bands to have changed
+  (`SCROLL_MIN_CHANGED_BAND_FRAC`). Baseline after the fix: `dyErrorSum` **0px**,
+  176/176 scroll events, height exact, ghost madMean 3.07 / badBlocks 0.98%.
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit

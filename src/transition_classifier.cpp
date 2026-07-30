@@ -43,15 +43,40 @@ bool TransitionClassifier::scroll_explains(const cv::Mat& prev_gray,
     cv::bitwise_and(changed0, changedS, unexplained);
 
     std::vector<double> fracs;
+    std::vector<int>    quiet;   // bands with no measurable residual
     for (int y = 0; y + RESIDUAL_BAND_H <= overlap; y += RESIDUAL_BAND_H) {
         const cv::Rect band(0, y, W, RESIDUAL_BAND_H);
         const int n = cv::countNonZero(changed0(band));
-        if (n < 200) continue;   // band barely changed — no evidence either way
+        if (n < 200) { quiet.push_back(y); continue; }   // no evidence in it
         fracs.push_back(static_cast<double>(cv::countNonZero(unexplained(band))) / n);
     }
     // A real scroll changes many rows; if nothing changed anywhere, a nonzero
     // dy claim has no supporting evidence.
     if (fracs.empty()) return false;
+
+    // A quiet band carries no residual, but for a nonzero dy it is not neutral
+    // either: content moves through EVERY band, so a band with texture that
+    // stayed put is evidence against the hypothesis. Enough of the informative
+    // bands must therefore have changed at all — otherwise the median can be
+    // carried by a couple of flat-on-flat coincidences (measured: an in-place
+    // panel swap 320px below a same-shade header produced a perfect median at
+    // dy = −320 from 3 changed bands out of 18, on all ten repetitions).
+    //
+    // Only the quiet bands need their texture measured, and only while the
+    // ratio can still fall below the bar — a scroll that changed most of its
+    // bands passes before any stddev is computed.
+    // changed / informative ≥ FRAC  ⟺  informative ≤ changed / FRAC
+    const double max_informative =
+        static_cast<double>(fracs.size()) / SCROLL_MIN_CHANGED_BAND_FRAC;
+    if (static_cast<double>(fracs.size() + quiet.size()) > max_informative) {
+        double informative = static_cast<double>(fracs.size());
+        for (int y : quiet) {
+            cv::Scalar mean, stddev;
+            cv::meanStdDev(curr_gray(curr_roi)(cv::Rect(0, y, W, RESIDUAL_BAND_H)), mean, stddev);
+            if (stddev[0] < IDENT_MIN_STDDEV) continue;   // flat: nothing to show
+            if (++informative > max_informative) return false;
+        }
+    }
 
     std::nth_element(fracs.begin(), fracs.begin() + fracs.size() / 2, fracs.end());
     return fracs[fracs.size() / 2] <= SCROLL_RESIDUAL_MEDIAN_MAX;
