@@ -25,7 +25,7 @@ anything.
 > is reported with its position, and if it settles into states (a gallery, an
 > embedded prototype tapped through screen by screen) each state is written as its
 > own image, while a region that never holds still is called noise and kept out of
-> the document model — and a machine-readable session report (`-r`, schema 4). All
+> the document model — and a machine-readable session report (`-r`, schema 8). All
 > measured by a reproducible benchmark: fourteen recorded lab sessions plus seven
 > real screen recordings, scored by one command.
 >
@@ -131,7 +131,7 @@ This produces `./build/verty`.
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON, `"schema": 7`). Per page: the stitch
+- `-r` — optional **session report** (JSON, `"schema": 8`). Per page: the stitch
   file, `capturedExtent` (how much document the frames actually covered),
   `documentHeight` (the document's real height where the scrollbar could be read,
   with its own uncertainty — `null` when unknowable), `reachedBottom`
@@ -159,9 +159,11 @@ This produces `./build/verty`.
   Each page also carries `subframes[]`: every region that changed while the
   document did not, with its rectangle in viewport coordinates, `documentY` (the
   document row that rectangle sits at on this page — `null` when the region's
-  evidence frames disagree on one offset, as a viewport-fixed sticky element's do,
-  or when none of them was localized), how many times it
-  changed on that page, and its `kind`. A `screenflow` lists its settled `states` — frame,
+  evidence frames disagree on one offset, when none of them was localized, or when
+  the region was measured to be fixed to the viewport), `anchoredTo` with its
+  `anchorEvidence`, `offsetSpreadPx`, `inPlaceChanges` (transitions on which it
+  changed while the document stood still, counted once per frame even when several
+  parts of it repainted), and its `kind`. A `screenflow` lists its settled `states` — frame,
   timestamp, how long it was held, its own `documentY`, and the image file each was written to
   (`<out>_page000_sub000_state000.png`, …); a `noise` region lists none, because a
   playing video has no state worth keeping. Where a screen flow **scrolled its own
@@ -179,6 +181,19 @@ This produces `./build/verty`.
   screens and no majority, adjacent rows elect different ones and the region
   renders as a superposition. A consumer laying the states out itself knows from
   `stampedState` which one is already on the page.
+
+  **`anchoredTo` is measured, not assumed.** Across each scroll transition the page
+  made, the region's pixels are compared against the previous frame twice: at the
+  rectangle shifted by that transition's `dy` (it moved with the document) and at the
+  same rectangle (it stayed put in the viewport). Both hypotheses are scored the same
+  way over the rows both can see, so a region that also repainted itself pays the
+  same penalty under each — which is why it works on a playing video ad. Measured
+  across the corpus, the chosen hypothesis is never worse than 0.754 MAD and the
+  rejected one never better than 22.24, including the three regions that never hold
+  still. `null` means no verdict: usually a page that never scrolled, so no evidence
+  exists (`anchorEvidence.scorableTransitions: 0`). A viewport-fixed region has no
+  single document row, which is why `documentY` is then `null` — the evidence for
+  that is in the same object rather than left to be inferred.
 
   **To place a state over the page stitch**, take `x`, `w` and `h` from the
   subframe's `rect` and `y` from that state's `documentY` — a state's image is a crop

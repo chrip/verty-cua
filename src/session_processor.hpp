@@ -34,8 +34,31 @@ public:
     // states, the inner documents and the change count are this page's share of
     // it. A page can hold several — an ajax gallery and a scrollable comment
     // section under it are two — and one region can appear under several pages.
+    // Does the region move WITH the document, or stay put in the viewport? Asked
+    // of the pixels across the scroll transitions the page actually made: a
+    // document-anchored region's pixels appear in the previous frame shifted by
+    // that transition's dy, a viewport-fixed region's appear at the same
+    // rectangle. Both hypotheses are scored by the same MAD over exactly the rows
+    // both of them can see, so a region that also changed its own content between
+    // the two frames penalises them equally — which is what lets the test work on
+    // a region that never holds still at all.
+    struct Anchor {
+        enum class To { Unknown, Document, Viewport };
+        To     to             = To::Unknown;
+        int    scorable       = 0;    // transitions this region could be scored on
+        int    votes_document = 0;
+        int    votes_viewport = 0;
+        double mad_document   = -1.0; // medians over the scored transitions,
+        double mad_viewport   = -1.0; // -1 = nothing was scored
+    };
+
     struct PageSubframe {
         cv::Rect                              rect;
+        Anchor                                anchor;
+        // Spread of the document offsets this page's evidence frames sit at. 0 for
+        // a region seen at one offset only; large for one whose viewport rect named
+        // content at several document rows.
+        long                                  offset_spread = 0;
         // The document row `rect.y` sits at on THIS page, or -1 for none. The rect
         // is in viewport coordinates and the page canvas is in document
         // coordinates, so without this a consumer cannot lay a state image back
@@ -144,6 +167,12 @@ private:
     // Kept past segmentation so a page can be rebuilt once its in-place regions
     // are known (see the stamping step in run()).
     std::unique_ptr<PageRegistry> registry_;
+
+    // Fills in the Anchor of every slice, in ONE sequential read of the video —
+    // and none at all when no page made a scroll transition a region could be
+    // scored on, which is every recording of a page that does not scroll.
+    struct Slice { int page = -1; PageSubframe sf; };
+    void measure_slice_anchors(std::vector<Slice>& slices);
 
     // The visit's first stable frame, grayscale (for page identification).
     [[nodiscard]] cv::Mat read_frame_gray(long index) const;

@@ -271,6 +271,54 @@ constexpr double SUBFRAME_MAX_WIDTH_FRAC = 0.40;
 // Measured document-offset spread across a region's own states: lab panels 0px,
 // real embedded phone mockups 0px and 68px (the 68 being a residual false scroll of
 // its own), against 120-720px for a scrolling product grid and 2759-3779px for a
+
+// ── Anchor: does an in-place region move with the document? ───────────────────
+// Scored per scroll transition, twice: the region's pixels in the current frame
+// against the previous frame at the SHIFTED rectangle (it moved with the
+// document) and at the SAME rectangle (it stayed put in the viewport). See
+// SessionProcessor::measure_slice_anchors for why the alternatives — the overlay
+// list, the noise mask, the offset spread — cannot answer it.
+//
+// Measured over every region the corpus reports — median MAD of each hypothesis
+// over the transitions it could be scored on:
+//
+//   region                                    pairs   moved   stayed   verdict
+//   rw1 sticky video ad, 481x956 at the edge     20  69.672    0.003   viewport
+//   rw1 in-content ad, 302x331                   20   0.508   54.877   document
+//   rw6 carousel, 501x241 (noise)                12   0.004   73.868   document
+//   rw6 grid hover preview, 669x229 (3 pages) 11-15 0.004-0.274 26-44  document
+//   lab panel tapped 30 times                   176   0.404   25.497   document
+//   lab panel, its own inner scroll              46   0.414   30.671   document
+//   lab panel, ANIMATED (never holds still)      46   0.422   24.327   document
+//   lab hostile, two regions                    123 0.695/0.754 22/27  document
+//   rw5 mockup (4 pages), rw7 flow                0       —        —   no verdict
+//
+// The chosen hypothesis is never worse than 0.754 and the rejected one never
+// better than 22.24 — a factor of 29 with nothing in between, so the ratio bar is
+// set 7x away from the worst observation. The three controls that matter are the
+// regions that NEVER hold still (the animated panel, the inner-scrolling panel,
+// the video ad): a region repainting itself pays the same penalty under both
+// hypotheses, so all three are still decided correctly, which is the whole reason
+// the comparison is made per transition instead of between distant frames. Asked
+// between distant frames it does NOT separate — a product grid is periodic enough
+// that two frames 600px apart look alike (28.9 staying vs 37.5 moving for a
+// region confirmed in flow at 170:1 here).
+//
+// The two pages that score nothing are pages that never scrolled: with no scroll
+// transition there is no evidence, and no verdict is the honest answer. Both bars
+// are floors on evidence, not on strength: 0.929 is the worst vote fraction
+// observed (13 of 14, a grid whose repeats occasionally favour the wrong shift).
+// Cost: one extra sequential read where a page scrolled at all — rw6 177.0s ->
+// 178.3s, session_gallery 26.6s -> 27.6s, rw7 unchanged (skipped).
+constexpr double ANCHOR_MIN_VOTE_FRAC   = 0.75;
+constexpr double ANCHOR_MAX_MAD_RATIO   = 0.25;
+constexpr int    ANCHOR_MIN_PAIRS       = 3;
+// The shifted rectangle has to stay in frame, so a transition only scores the
+// rows both hypotheses can see. Below this many rows the comparison is a sliver
+// of a region and says nothing about it.
+constexpr int    ANCHOR_MIN_OVERLAP_PX  = 40;
+
+
 // news article's content column.
 constexpr long   SUBFRAME_MAX_ANCHOR_DRIFT = 100;
 // Smallest share of the frame a subframe may be. Without it, every text block of

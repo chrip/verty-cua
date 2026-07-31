@@ -140,6 +140,117 @@ cv::Mat SessionProcessor::read_frame_gray(long index) const
     return gray;
 }
 
+// ── measure_slice_anchors ─────────────────────────────────────────────────────
+// The anchor question, asked of the pixels: across a transition where the
+// document moved by dy, did this region's pixels move with it?
+//
+//   document-anchored:  curr(R) matches prev(R shifted by dy)
+//   viewport-fixed:     curr(R) matches prev(R)
+//
+// Both are one patch_mad over exactly the rows both hypotheses can see (the
+// shifted rectangle must stay inside the frame), so a region that ALSO repainted
+// itself between the two frames pays the same penalty under both, and the
+// comparison is still decided by whether the surroundings moved. That is what
+// makes the test usable on a region that never holds still — a playing video ad
+// is the case it exists for.
+//
+// Why this and not something cheaper (each measured and rejected):
+//   overlays[]      — over-detects by design: the in-flow panels of the gallery
+//                     fixtures are listed as overlays, so anchoring cannot ride
+//                     on it.
+//   the noise mask  — measures a change RATE, not an anchor; an in-flow panel is
+//                     99% inside it.
+//   the offset spread alone — cannot separate: a product grid's legitimate
+//                     spread (720px, seen at several rows on one page) and a
+//                     sticky ad's (660px) are the same number.
+void SessionProcessor::measure_slice_anchors(std::vector<Slice>& slices)
+{
+    if (slices.empty()) return;
+    const cv::Rect bounds(0, 0, frame_w_, frame_h_);
+    // The rows both hypotheses can see, for this rect under this dy.
+    auto scorable_rows = [&](const cv::Rect& r, long dy) {
+        long top = r.y, bot = r.y + r.height;
+        if (dy > 0) bot = std::min<long>(bot, frame_h_ - dy);
+        else        top = std::max<long>(top, -dy);
+        return cv::Rect(r.x, static_cast<int>(top), r.width,
+                        static_cast<int>(std::max<long>(0, bot - top)));
+    };
+
+    // Which transitions are worth decoding for — decided from the frame table
+    // alone, so a session that offers none is never read again.
+    struct Step { long frame; long dy; int page; };
+    std::vector<Step> steps;
+    for (long i = 1; i < frame_count_; ++i) {
+        const FrameRecord& a = frames_[static_cast<size_t>(i - 1)];
+        const FrameRecord& b = frames_[static_cast<size_t>(i)];
+        if (a.pageId < 0 || a.pageId != b.pageId) continue;   // no page, or a change
+        if (a.vt < 0 || b.vt < 0 || a.vt == b.vt) continue;   // document stood still
+        for (const Slice& sl : slices)
+            if (sl.page == a.pageId
+                && scorable_rows(sl.sf.rect & bounds, b.vt - a.vt).height
+                       >= ANCHOR_MIN_OVERLAP_PX) {
+                steps.push_back({i, b.vt - a.vt, a.pageId});
+                break;
+            }
+    }
+    if (steps.empty()) return;
+
+    std::vector<std::vector<double>> md(slices.size()), mv(slices.size());
+    VideoSource video(video_path_);
+    if (!video.ok()) return;
+    VideoSource::Frame f;
+    cv::Mat prev, curr;
+    size_t next = 0;
+    while (next < steps.size() && video.next(f)) {
+        cv::cvtColor(f.bgr, curr, cv::COLOR_BGR2GRAY);
+        while (next < steps.size() && steps[next].frame < f.index) ++next;
+        if (next < steps.size() && steps[next].frame == f.index && !prev.empty()) {
+            const Step& st = steps[next];
+            for (size_t k = 0; k < slices.size(); ++k) {
+                if (slices[k].page != st.page) continue;
+                const cv::Rect r = scorable_rows(slices[k].sf.rect & bounds, st.dy);
+                if (r.height < ANCHOR_MIN_OVERLAP_PX) continue;
+                const int shifted_y = static_cast<int>(r.y + st.dy);
+                if (shifted_y < 0 || shifted_y + r.height > frame_h_) continue;
+                const cv::Mat patch = curr(r);
+                const double moved  = patch_mad_at(prev, r.x, shifted_y, patch);
+                const double stayed = patch_mad_at(prev, r.x, r.y, patch);
+                Anchor& an = slices[k].sf.anchor;
+                ++an.scorable;
+                if      (moved < stayed) ++an.votes_document;
+                else if (stayed < moved) ++an.votes_viewport;
+                md[k].push_back(moved);
+                mv[k].push_back(stayed);
+            }
+            ++next;
+        }
+        prev = curr.clone();
+    }
+
+    auto median = [](std::vector<double>& v) {
+        if (v.empty()) return -1.0;
+        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+        return v[v.size() / 2];
+    };
+    for (size_t k = 0; k < slices.size(); ++k) {
+        Anchor& an = slices[k].sf.anchor;
+        an.mad_document = median(md[k]);
+        an.mad_viewport = median(mv[k]);
+        if (an.scorable < ANCHOR_MIN_PAIRS) continue;
+        const bool doc = an.votes_document >= an.votes_viewport;
+        const int  win_votes = doc ? an.votes_document : an.votes_viewport;
+        const double win  = doc ? an.mad_document : an.mad_viewport;
+        const double lose = doc ? an.mad_viewport : an.mad_document;
+        // A verdict needs the votes AND the margin: the losing hypothesis must be
+        // wrong by a wide factor, not merely behind. Without the margin, two
+        // hypotheses that both fit badly (a region whose content changed
+        // completely across the transition) would still elect one.
+        if (win_votes >= ANCHOR_MIN_VOTE_FRAC * an.scorable
+            && lose > 0 && win <= ANCHOR_MAX_MAD_RATIO * lose)
+            an.to = doc ? Anchor::To::Document : Anchor::To::Viewport;
+    }
+}
+
 // ── run ───────────────────────────────────────────────────────────────────────
 bool SessionProcessor::run()
 {
@@ -354,6 +465,7 @@ bool SessionProcessor::run()
             }
             return v;
         };
+        std::vector<Slice> slices;
         for (const auto& sf : subframes_) {
             std::map<int, PageSubframe> per_page;
             auto slot = [&](int page) -> PageSubframe& {
@@ -366,6 +478,8 @@ bool SessionProcessor::run()
                 }
                 return it->second;
             };
+            // change_frames holds each frame once (see subframe_tracker.cpp), so a
+            // page's count is a count of transitions, which is what it is read as.
             for (long f : sf.change_frames) {
                 const int p = page_of(f);
                 if (p >= 0) ++slot(p).in_place_changes;
@@ -417,25 +531,17 @@ bool SessionProcessor::run()
                 // ordinary in-flow elements (the `position: relative` panels of the
                 // gallery and hostile fixtures, a carousel in rw6_shopcatalog) that
                 // do sit at one document row — 711 for the gallery video panel,
-                // agreed by all 627 of its localized change frames.
+                // agreed by every one of the 480 frames it changed on.
                 //
                 // What agreement proves, and what it does not. It proves the
                 // document stood still across every frame this region is evidenced
                 // by, so the row is where the stitch wrote those pixels. It does NOT
                 // prove the region moves WITH the document: a viewport-fixed element
                 // that only churns while the page is still would agree too, and a
-                // single change frame agrees with itself. Asked of the pixels
-                // directly — compare the region's rect between two frames at
-                // different offsets, once unshifted and once shifted by the offset
-                // difference — the four in-flow noise regions above answer clearly
-                // (unshifted 69.7/83.0/93.6/119.1 MAD against shifted
-                // 39.8/35.2/35.6/0.7), so the branch is right where it is used. But
-                // the same question put to the screen flows does not separate: a
-                // product grid is periodic enough that rw6's page 6 prefers
-                // "viewport" (28.9 vs 37.5) for the region its page 0 shows in flow
-                // at 170:1, and an offset difference of 2px decides nothing. So the
-                // anchor is deliberately NOT reported as a verdict — this field
-                // states a row and what founds it, and nothing about CSS.
+                // single change frame agrees with itself. That question is answered
+                // separately and from the pixels, by measure_slice_anchors below,
+                // and a region it finds fixed to the viewport has this row taken
+                // away again.
                 std::vector<long> evidence;
                 if (!ps.states.empty()) {
                     for (const auto& st : ps.states) evidence.push_back(st.frame);
@@ -462,8 +568,49 @@ bool SessionProcessor::run()
                     if (v >= 0) st.document_y = ps.rect.y + v;
                 }
 
-                pages_[static_cast<size_t>(p)].subframes.push_back(std::move(ps));
+                // The offsets this page's own evidence sits at, spread and all —
+                // reported next to the anchor because together they say whether one
+                // rectangle names one thing here.
+                long slo = -1, shi = -1;
+                for (long f : sf.change_frames) {
+                    if (page_of(f) != p || f < 0 || f >= frame_count_) continue;
+                    const long v = frames_[static_cast<size_t>(f)].vt;
+                    if (v < 0) continue;
+                    if (slo < 0 || v < slo) slo = v;
+                    if (shi < 0 || v > shi) shi = v;
+                }
+                if (slo >= 0) ps.offset_spread = shi - slo;
+
+                slices.push_back({p, std::move(ps)});
             }
+        }
+
+        // ── Anchor: does each region move with the document? ─────────────────
+        // Measured before anything is published, because the answer decides what
+        // may be published: a region shown to sit still in the VIEWPORT has no one
+        // document row, and the row its offsets happen to agree on would be a
+        // number that means nothing. Agreement alone cannot see this — it proves
+        // the document stood still across the region's evidence, which a sticky
+        // element that only churns while the page is still satisfies too.
+        measure_slice_anchors(slices);
+        for (Slice& sl : slices) {
+            if (sl.sf.anchor.to == Anchor::To::Viewport) {
+                // The region-level row goes; the per-state rows stay. A state is a
+                // fact about ONE frame — those pixels were at that row in it, and
+                // that is where the page's stamp of it is — while the region as a
+                // whole was at every row and none.
+                sl.sf.document_y = -1;
+                if (verbose_)
+                    std::cout << "[page " << sl.page << "] in-place region "
+                              << sl.sf.rect.width << "×" << sl.sf.rect.height << " at ("
+                              << sl.sf.rect.x << "," << sl.sf.rect.y << ") is fixed to the"
+                              << " VIEWPORT (" << sl.sf.anchor.votes_viewport << "/"
+                              << sl.sf.anchor.scorable << " scroll transitions, MAD "
+                              << sl.sf.anchor.mad_viewport << " staying vs "
+                              << sl.sf.anchor.mad_document << " moving): it has no"
+                              << " document row\n";
+            }
+            pages_[static_cast<size_t>(sl.page)].subframes.push_back(std::move(sl.sf));
         }
         for (PageResult& pg : pages_)
             std::sort(pg.subframes.begin(), pg.subframes.end(),

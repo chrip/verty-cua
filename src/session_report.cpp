@@ -1,8 +1,11 @@
 #include "session_report.hpp"
+#include <format>
 #include <fstream>
 #include <iomanip>
 
 namespace {
+
+using PageSubframeAnchorTo = SessionProcessor::Anchor::To;
 
 const char* kind_name(FixedKind k)
 {
@@ -78,7 +81,16 @@ bool SessionReport::write(const std::string& path,
     // rw6_shopcatalog, because the user had scrolled somewhere else each time — so
     // the viewport rect alone is not enough to place anything, and a region
     // classified as noise has no state, hence no frame, hence was unplaceable.
-    out << "  \"schema\": 7,\n";
+    // schema 8 adds subframes[].anchoredTo + anchorEvidence + offsetSpreadPx, and
+    // makes documentY null for a region measured to be fixed to the VIEWPORT. A row
+    // its evidence agrees on is only the row the stitch wrote those pixels at while
+    // the document stood still; whether the region moves WITH the document is a
+    // different question, and one the pixels answer decisively when the page
+    // scrolled (see ANCHOR_* in types.hpp: the chosen hypothesis never worse than
+    // 0.754 MAD, the rejected one never better than 22.24). Publishing the verdict
+    // and its evidence also says WHY a documentY is null — no scroll to measure
+    // against, offsets that disagree, or a region that never had a row.
+    out << "  \"schema\": 8,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -184,7 +196,30 @@ bool SessionReport::write(const std::string& path,
                 // and the states must not be laid over the stitch at all.
                 << "\"documentY\": "
                 << (sf.document_y >= 0 ? std::to_string(sf.document_y) : "null") << ", "
+                // Whether the region was shown to move WITH the document or to stay
+                // put in the viewport, and the evidence for it: one vote and two
+                // median MADs per scroll transition the region could be scored on.
+                // null means no verdict — either the page never scrolled far enough
+                // for a single transition to be scorable (`scorableTransitions: 0`,
+                // which is every recording of a page that does not scroll), or both
+                // hypotheses fit too badly to choose between. A viewport-fixed
+                // region has no single document row, so its documentY above is null
+                // for a measured reason rather than for want of agreement.
+                << "\"anchoredTo\": "
+                << (sf.anchor.to == PageSubframeAnchorTo::Document ? "\"document\""
+                    : sf.anchor.to == PageSubframeAnchorTo::Viewport ? "\"viewport\""
+                    : "null")
+                << ", \"anchorEvidence\": {\"scorableTransitions\": " << sf.anchor.scorable
+                << ", \"votesDocument\": " << sf.anchor.votes_document
+                << ", \"votesViewport\": " << sf.anchor.votes_viewport
+                << ", \"madDocument\": "
+                << (sf.anchor.mad_document >= 0 ? std::format("{:.3f}", sf.anchor.mad_document) : "null")
+                << ", \"madViewport\": "
+                << (sf.anchor.mad_viewport >= 0 ? std::format("{:.3f}", sf.anchor.mad_viewport) : "null")
+                << "}, \"offsetSpreadPx\": " << sf.offset_spread << ", "
                 << "\"kind\": \"" << (sf.screenflow ? "screenflow" : "noise") << "\", "
+                // Transitions on which the region changed while the document stood
+                // still — counted once per frame, not once per repainted component.
                 << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
                 << "\"settledStates\": " << sf.states.size() << ", "
                 // Which state the PAGE image shows in this rectangle — normally the

@@ -422,6 +422,55 @@ def score_stamps(report, gt=None):
     return m
 
 
+def score_document_rows(report, gt):
+    """Is a subframe's documentY where the BROWSER said that element is?
+
+    The fixtures declare their mutating and animated regions in DOCUMENT
+    coordinates, measured from the DOM at record time — a yardstick that never
+    passes through this tool's scroll tracking, its stitch, or its frame table. The
+    reported region is not the declared element (it is the part that repaints: a
+    panel whose app bar never changes is reported as its scrolling body alone), so
+    the check is containment, not equality: the rows we claim must lie inside the
+    rows the DOM declared.
+
+    Returns None when the ground truth declares no region in document coordinates.
+    """
+    if not gt:
+        return None
+    declared = []
+    for page in (gt.get("pages") or [gt]):
+        mr = page.get("mutatingRegion")
+        if mr:
+            declared.append(mr)
+        for dr in (page.get("dynamicRegions") or gt.get("dynamicRegions") or []):
+            if dr.get("doc"):
+                declared.append(dr["doc"])
+    if not declared:
+        return None
+    worst, checked = 0.0, 0
+    for box in declared:
+        sf = subframe_over(report, box)
+        if not sf or sf.get("documentY") is None:
+            continue
+        checked += 1
+        top, bot = float(box["y"]), float(box["y"]) + float(box["height"])
+        y0 = float(sf["documentY"])
+        y1 = y0 + float(sf["rect"]["h"])
+        worst = max(worst, top - y0, y1 - bot)      # how far outside, either end
+    if not checked:
+        return None
+    return {"regions": checked, "worstOverhangPx": round(worst, 2),
+            "pass": worst <= DOCUMENT_ROW_TOLERANCE_PX}
+
+
+# A reported region must sit inside the document rows the DOM declared for the
+# element it came from. Measured overhang: 0.55px (hostile's animated panels,
+# reported 857..1018 against a declared 857.45..1017.45) and 0px everywhere else,
+# so the bar is 7x the worst observation and still small enough that a wrong
+# scroll offset — the failure this exists to catch — cannot hide under it.
+DOCUMENT_ROW_TOLERANCE_PX = 4
+
+
 # A stamped state's documentY minus its viewport row is the scroll offset of one
 # frame, and the recorder wrote that number down. They are the same quantity, so
 # the tolerance is for accumulated dead-reckoning error only — measured 0px on
@@ -775,10 +824,12 @@ def main():
     # Applies to every session, ground truth or not: the report is checked against
     # the images the same run wrote.
     stamps = score_stamps(report, gt)
+    docrows = score_document_rows(report, gt)
     if realworld:
         checks, production = score_realworld(report, session)
         scroll, ghost, total_error = None, None, 0
-        passed = checks["pass"] and (stamps is None or stamps["pass"])
+        passed = (checks["pass"] and (stamps is None or stamps["pass"])
+                  and (docrows is None or docrows["pass"]))
     else:
         scroll = score_scroll(report, gt)
     # A settled full-page reference makes the ghost metric meaningful for any
@@ -790,14 +841,16 @@ def main():
     elif multipage:
         checks, total_error, seg_pass, fixed_na = score_multipage(report, gt)
         passed = (seg_pass and scroll["pass"] and (ghost is None or ghost["pass"])
-                  and (stamps is None or stamps["pass"]))
+                  and (stamps is None or stamps["pass"])
+                  and (docrows is None or docrows["pass"]))
     else:
         allow_pc = os.path.basename(session.rstrip(os.sep)) in PAGECHANGE_EXPECTED
         metrics, total_error, stitch_pass, seg_ok = score_single(report, gt, allow_pc)
         passed = (stitch_pass and scroll["pass"]
                   and (allow_pc or scroll["pageChanges"] == 0)
                   and (ghost is None or ghost["pass"])
-                  and (stamps is None or stamps["pass"]))
+                  and (stamps is None or stamps["pass"])
+                  and (docrows is None or docrows["pass"]))
 
     # ── Archive outputs under unique, self-describing names ───────────────────
     now = datetime.now(timezone.utc)
@@ -847,6 +900,8 @@ def main():
         entry["ghost"] = ghost
     if stamps is not None:
         entry["stamps"] = stamps
+    if docrows is not None:
+        entry["documentRows"] = docrows
 
     # ── History (same session only) ────────────────────────────────────────────
     history = []
@@ -885,6 +940,11 @@ def main():
               f"    stamps: {'PASS' if stamps['pass'] else 'FAIL'}")
         for note in stamps.get("notes", []):
             print(f"      ! {note}")
+    if docrows is not None:
+        print(f"  Subframe rows vs the DOM:  {docrows['regions']} declared region(s)"
+              f"  worstOverhang={docrows['worstOverhangPx']}px"
+              f" (tol {DOCUMENT_ROW_TOLERANCE_PX})"
+              f"    documentRows: {'PASS' if docrows['pass'] else 'FAIL'}")
     print(f"\n  overall: {'PASS' if passed else 'FAIL'}   ({elapsed:.1f}s)")
 
     if prev is not None:

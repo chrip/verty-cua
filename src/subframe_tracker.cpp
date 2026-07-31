@@ -208,8 +208,17 @@ void SubframeTracker::finish()
     for (const cv::Rect& r : kept) {
         Subframe sf;
         sf.rect = r;
+        // One transition can leave SEVERAL change boxes inside one region — a screen
+        // swap that repaints a header and a body is two components — so a region is
+        // credited with a change once per FRAME, not once per box. change_boxes_ is
+        // in frame order, so a repeat is always the previous entry. Measured on the
+        // reported counts, boxes against transitions: 627/480 for an animated panel,
+        // 73/49 for an embedded phone flow, 27/18 and 9/6 for a news portal's two
+        // regions — so counting boxes overstates a region's activity by up to half,
+        // and "how many times it changed" is the one thing this number is read as.
         for (const auto& [b, frame] : change_boxes_)
-            if ((r & b).area() >= SUBFRAME_CONTAINED_FRAC * b.area()) {
+            if ((r & b).area() >= SUBFRAME_CONTAINED_FRAC * b.area()
+                && (sf.change_frames.empty() || sf.change_frames.back() != frame)) {
                 ++sf.in_place_changes;
                 sf.change_frames.push_back(frame);
             }
