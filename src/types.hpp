@@ -224,6 +224,24 @@ constexpr int    SUBFRAME_CLOSE_PX       = 25;
 // stitching it would cost three more passes over the video to reproduce a crop
 // that already exists.
 constexpr int    SUBFRAME_MIN_INNER_SCROLLS = 2;
+// Share of a transition's changed pixels that must lie inside one subframe for the
+// change to be that subframe's rather than the document's. Measured on the
+// misattribution this exists to stop: 99.4% of the changed pixels were inside the
+// phone mockup (143k of 144k), with 887px of a 1.43M-pixel remainder moving. A
+// real document scroll spreads its changed pixels across the whole frame, so it
+// cannot be contained in a bounded rect — the margin either side is wide.
+constexpr double SUBFRAME_CONFINED_CHANGE_FRAC = 0.90;
+// ...but only a region NARROWER than this share of the frame may refuse a scroll.
+// A document's content area spans most of the viewport width — that is what makes
+// it the document — while a subframe is an element inside the content flow and is
+// narrower. Without the gate the rule misfires on exactly the case it looks like:
+// a leap across a page replaces the whole content column at once, so the column
+// reads as a region changing in place and settling, and refusing dy there cost
+// session_manyjumps its re-localization (totalError 122 → 965, 11 phantom
+// navigations). Measured width shares: subframes that must refuse 19-25% (embedded
+// phone screens, a fixed video ad, the lab panels), content columns that must not
+// 50-61%. The gate sits in the empty middle.
+constexpr double SUBFRAME_MAX_WIDTH_FRAC = 0.40;
 // Smallest share of the frame a subframe may be. Without it, every text block of
 // a page that reloads its own content qualifies — measured on the auto-refreshing
 // news portal: 79 candidate regions of 0.3-3% of the frame, several with two

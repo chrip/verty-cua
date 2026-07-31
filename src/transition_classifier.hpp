@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include <vector>
 #include "scroll_detector.hpp"
 
 // Type of one frame-to-frame transition (Roadmap M2).
@@ -58,9 +59,19 @@ public:
     //              used for detector sampling (the M5/M7 lessons).
     // Bounded scrolling animation needs no mask: the median-banded veto
     // tolerates it by construction.
+    // `subframes` are rectangles a previous pass found to change IN PLACE while
+    // the document stood still (see subframe_tracker.hpp). A scroll dy whose
+    // evidence is contained in one of them belongs to that region, not to the
+    // document — measured on an embedded phone flow, where the mockup's own
+    // scrolling was charged to the page: four dy claims of 54, 133, 45 and 55px
+    // on transitions where the phone screen repainted 45-58% of itself and the
+    // rest of the frame changed by 0.001-0.37%. The page had not moved, but its
+    // canvas grew 287px and its viewport-fixed furniture was written four times
+    // down it.
     Transition classify(const cv::Mat& prev_gray, const cv::Mat& curr_gray,
                         const cv::Mat& fixed_mask = cv::Mat(),
-                        const cv::Mat& dynamic_mask = cv::Mat());
+                        const cv::Mat& dynamic_mask = cv::Mat(),
+                        const std::vector<cv::Rect>& subframes = {});
 
 private:
     Sensitivity    sensitivity_;

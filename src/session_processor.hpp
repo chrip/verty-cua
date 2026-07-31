@@ -115,8 +115,11 @@ private:
     // (index 0 is a placeholder). seed_noise pre-loads the persistent-noise
     // mask so a fixed video ad is masked from frame one — see run() for the
     // two-pass reason. On return, noise_mask_ holds the matured mask.
+    // `subframe_rects` are the in-place-changing regions a previous pass found;
+    // the classifier refuses a scroll dy contained in one of them.
     [[nodiscard]] std::vector<Transition> classify_transitions(
-        const cv::Mat& seed_noise = cv::Mat());
+        const cv::Mat& seed_noise = cv::Mat(),
+        const std::vector<cv::Rect>& subframe_rects = {});
 
     cv::Mat noise_mask_;
     std::vector<SubframeTracker::Subframe> subframes_;   // matured persistent-noise mask (last classify pass)

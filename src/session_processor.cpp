@@ -27,7 +27,8 @@ SessionProcessor::SessionProcessor(std::string video_path, bool verbose,
 // a navigation between same-chrome pages goes undetected (measured on the
 // multipage fixture: full-frame fraction 0.39 < 0.4 gate, interior 0.67).
 // The per-page authoritative fixed masks are still built by each PageStitcher.
-std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& seed_noise)
+std::vector<Transition> SessionProcessor::classify_transitions(
+    const cv::Mat& seed_noise, const std::vector<cv::Rect>& subframe_rects)
 {
     std::vector<Transition> transitions;
 
@@ -61,7 +62,7 @@ std::vector<Transition> SessionProcessor::classify_transitions(const cv::Mat& se
         // band is located, so a second classification pass costs nothing.
         if (scrollbar_) scrollbar_->observe(curr_gray);
         Transition tr = classifier_.classify(prev_gray, curr_gray,
-                                             chrome_mask, noise_mask);
+                                             chrome_mask, noise_mask, subframe_rects);
         counts_.add(tr.type);
         transitions.push_back(tr);
         if (track_subframes)
@@ -148,11 +149,25 @@ bool SessionProcessor::run()
     // single page into spurious visits. Only pass 2 when there IS confirmed
     // noise — the common case does one pass.
     std::vector<Transition> transitions = classify_transitions();
-    if (!noise_mask_.empty() && cv::countNonZero(noise_mask_) > 0) {
-        if (verbose_)
-            std::cout << "[session] persistent noise confirmed ("
-                      << cv::countNonZero(noise_mask_) << "px) — reclassifying\n";
-        transitions = classify_transitions(noise_mask_);
+    // Pass 2 re-classifies with what pass 1 learned: where the persistent noise
+    // is, and which rectangles change in place while the document stands still. A
+    // scroll dy contained in one of those is that region's, not the document's —
+    // and pass 1 could not know it, because the regions are only grouped once
+    // every change has been seen.
+    std::vector<cv::Rect> subframe_rects;
+    for (const auto& sf : subframes_) subframe_rects.push_back(sf.rect);
+    const bool have_noise = !noise_mask_.empty() && cv::countNonZero(noise_mask_) > 0;
+    if (have_noise || !subframe_rects.empty()) {
+        if (verbose_) {
+            std::cout << "[session] reclassifying with";
+            if (have_noise)
+                std::cout << " persistent noise (" << cv::countNonZero(noise_mask_) << "px)";
+            if (have_noise && !subframe_rects.empty()) std::cout << " and";
+            if (!subframe_rects.empty())
+                std::cout << " " << subframe_rects.size() << " in-place region(s)";
+            std::cout << "\n";
+        }
+        transitions = classify_transitions(have_noise ? noise_mask_ : cv::Mat(), subframe_rects);
     }
     frame_count_ = static_cast<long>(transitions.size());
     if (frame_count_ == 0) return false;

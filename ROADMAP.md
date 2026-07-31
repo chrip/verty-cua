@@ -1412,6 +1412,64 @@ Schema 5 moves `subframes[]` inside the page it belongs to. All 19 sessions PASS
 with every `totalError` and ghost score unchanged — this moved names and nesting,
 not pixels.
 
+### A scroll that belongs to a region, not to the document — 2026-07-31
+
+Spotted by eye in an output: the bottom third of one phone-flow page held a
+repeated fragment of the host page — its "Made in InVision" badge four times, two
+extra phone bezels — below the single phone screen. It looked like ghosting. It was
+not.
+
+**Measured.** That page recorded four scroll events (dy 54, 133, 45, 55 → vt 287),
+so its canvas was 1307px for a 1020px viewport. On every one of those four
+transitions the change was inside the phone mockup — 45-58% of the mockup repainted
+— and the rest of the frame changed by **0.001-0.37%**. The page never moved; the
+mockup's own content scrolled and the document was charged for it. Everything
+visible follows: the canvas grew by 287px that never existed, and because the visit
+had only those four "scroll" transitions — below the six the chrome accumulator
+needs — nothing was ever confirmed as fixed, so the page's viewport-fixed furniture
+was written once per phantom offset. The badge's canvas rows (973, 1159, 1205, 1260)
+match the vt increments exactly.
+
+**The fix, and why it needed two attempts.** A dy whose evidence is contained in a
+region that changes in place belongs to that region. The rectangles are already
+found — `SubframeTracker` locates them in pass 1 without needing the chrome
+estimate — so pass 2 now receives them the same way it already receives the noise
+mask, and the classifier refuses a proposal when ≥
+`SUBFRAME_CONFINED_CHANGE_FRAC` of the changed pixels sit inside one. Measured on
+the misattribution: 99.4% of the changed pixels inside the mockup, 887px of a
+1.43M-pixel remainder moving. A real document scroll spreads its change across the
+whole frame and cannot be contained in a bounded rect.
+
+That much, alone, broke `session_manyjumps`: totalError 122 → 965 with 11 phantom
+navigations. Its ten instant leaps replace the whole CONTENT COLUMN at once, and
+the column then settles — so the column reads as a region changing in place, and
+refusing dy inside it refused the fixture's genuine scrolls. There is no local way
+to tell "this narrow column is the document" from "this narrow column is a subframe
+inside a static document": both leave their surroundings unchanged, both pass the
+scroll veto, and on these recordings there is no scrollbar to arbitrate (CDP
+captures have none; the study recordings' viewer hides it).
+
+What does separate them, measured on both populations, is **width**:
+
+| | region width / frame width |
+|---|---|
+| embedded phone screens, a fixed video ad, the three lab panels | **19-25%** |
+| a page's content column (manyjumps, and rw1's teaser slots) | **50-61%** |
+
+A document's content area spans most of the viewport width — that is what makes it
+the document — while a subframe is an element inside the content flow. So only a
+region narrower than `SUBFRAME_MAX_WIDTH_FRAC` (0.40, in the empty middle of that
+gap) may refuse a scroll. It is a heuristic, and it is labelled as one; the honest
+part is that both sides of it are measured.
+
+**Result.** All 19 sessions PASS with every fixture at its established
+`totalError`. The seed sweep shows no new instability: the same two sessions wobble
+as before (rw1 1 page for 7 of 8 seeds, rw5 5/6/7) and the other ten are identical
+under every seed. Across the eight sessions of one phone-flow study, document that
+the pages claimed but never had: **7255px → 1134px**, and the page whose output
+started this is now nine pages of exactly one viewport each, with the repeated
+furniture gone and one coherent screen on each.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

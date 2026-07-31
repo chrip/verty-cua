@@ -85,7 +85,8 @@ bool TransitionClassifier::scroll_explains(const cv::Mat& prev_gray,
 Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
                                           const cv::Mat& curr_gray,
                                           const cv::Mat& fixed_mask,
-                                          const cv::Mat& dynamic_mask)
+                                          const cv::Mat& dynamic_mask,
+                                          const std::vector<cv::Rect>& subframes)
 {
     cv::Mat diff;
     cv::absdiff(prev_gray, curr_gray, diff);
@@ -117,6 +118,31 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     if (active <= 0 || cv::sum(active_diff)[0] / active < IDENTICAL_FRAME_MAD)
         return {TransitionType::Identical, 0};
 
+    // ── Is this change the DOCUMENT's, or one region's? ─────────────────────
+    // A dy whose evidence sits inside a region that changes in place belongs to
+    // that region. Without this test an embedded phone screen scrolling its own
+    // content was read as the page scrolling: the canvas grew by content that
+    // never existed and every viewport-fixed element on the page was written once
+    // per phantom offset. The changed mask is computed here and reused by the
+    // page-change spread below, so the test costs a count, not a pass.
+    cv::Mat smooth, changed;
+    cv::blur(diff, smooth, cv::Size(3, 3));
+    cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+    bool confined = false;
+    if (!subframes.empty()) {
+        const int total = cv::countNonZero(changed);
+        if (total > 0) {
+            const cv::Rect bounds(0, 0, changed.cols, changed.rows);
+            for (const cv::Rect& r : subframes) {
+                const cv::Rect c = r & bounds;
+                if (c.area() <= 0) continue;
+                if (c.width > SUBFRAME_MAX_WIDTH_FRAC * changed.cols) continue;
+                if (cv::countNonZero(changed(c))
+                    >= SUBFRAME_CONFINED_CHANGE_FRAC * total) { confined = true; break; }
+            }
+        }
+    }
+
     // The vote histogram proposes a dy; the explained-fraction veto decides.
     // The proposal is used even when the histogram's own validity gates fail:
     // animated content steals votes and can break the dominance gate on a
@@ -128,10 +154,12 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // regions (stripes, tiled images), letting an alias dy that explains only
     // those regions pass — measured on the revisit back-navigation, where a
     // masked veto accepted an alias and hid the page change entirely.
-    ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
-    for (int dy : s.proposals)
-        if (scroll_explains(prev_gray, curr_gray, dy, dynamic_mask))
-            return {TransitionType::Scroll, dy};
+    if (!confined) {
+        ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
+        for (int dy : s.proposals)
+            if (scroll_explains(prev_gray, curr_gray, dy, dynamic_mask))
+                return {TransitionType::Scroll, dy};
+    }
 
     // No scroll explains the change. A PAGE CHANGE is a change SPREAD over the
     // viewport: count the horizontal bands that changed significantly. Spread
@@ -139,9 +167,6 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // so it also works on sessions that never scrolled (where the online
     // chrome estimate cannot learn). A concentrated change (cookie banner,
     // animation, popup) touches few bands and stays Unstable under Normal.
-    cv::Mat smooth, changed;
-    cv::blur(diff, smooth, cv::Size(3, 3));
-    cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
     if (!ignore.empty())          // chrome + noise carry no page-change signal
         changed.setTo(0, ignore);
 
