@@ -63,7 +63,12 @@ bool SessionReport::write(const std::string& path,
     // schema 5 moves them INSIDE the page they belong to. A subframe is on a page,
     // its written files carry that page in their name, and one page can hold
     // several — an ajax gallery and a scrollable comment section below it.
-    out << "  \"schema\": 5,\n";
+    // schema 6 adds subframes[].stampedState: which of the states the page's own
+    // stitch shows inside that rectangle. The page image cannot show all of them,
+    // so it shows one, and a consumer that lays out the states itself needs to know
+    // which one is already there — otherwise it double-renders that state and has
+    // no way to tell which pixels of the page it may replace.
+    out << "  \"schema\": 6,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -156,7 +161,15 @@ bool SessionReport::write(const std::string& path,
                 << ", \"w\": " << sf.rect.width << ", \"h\": " << sf.rect.height << "}, "
                 << "\"kind\": \"" << (sf.screenflow ? "screenflow" : "noise") << "\", "
                 << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
-                << "\"settledStates\": " << sf.states.size() << ", ";
+                << "\"settledStates\": " << sf.states.size() << ", "
+                // Which state the PAGE image shows in this rectangle — normally the
+                // one the region was left in. null when the page shows no state
+                // there and its rectangle is reconstructed content: a noise region
+                // (no state is worth preferring) or a screen flow none of whose
+                // states could be placed in this page's document coordinates.
+                << "\"stampedState\": "
+                << (sf.stamped_state >= 0 ? std::to_string(sf.stamped_state) : "null")
+                << ", ";
             // Runs the subframe SCROLLED through, stitched by the same pipeline one
             // level down. Their images are taller than the subframe — that is the
             // point — so capturedExtent is in the SUBFRAME's document coordinates.

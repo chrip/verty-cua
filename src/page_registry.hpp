@@ -46,6 +46,10 @@ public:
     };
 
     [[nodiscard]] const std::vector<PageRecord>& records() const { return records_; }
+    // Non-const, for the one caller that has to reach a stitcher after
+    // segmentation: stamping a page's in-place regions needs their settled states,
+    // which are only known once every visit has been seen.
+    [[nodiscard]] std::vector<PageRecord>& records() { return records_; }
 
     // Handed to every page stitcher this registry creates (see
     // PageStitcher::set_subframes): those stitchers run their own classifier

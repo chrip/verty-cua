@@ -131,7 +131,7 @@ This produces `./build/verty`.
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON, `"schema": 5`). Per page: the stitch
+- `-r` — optional **session report** (JSON, `"schema": 6`). Per page: the stitch
   file, `capturedExtent` (how much document the frames actually covered),
   `documentHeight` (the document's real height where the scrollbar could be read,
   with its own uncertainty — `null` when unknowable), `reachedBottom`
@@ -147,14 +147,22 @@ This produces `./build/verty`.
   document did not, with its rectangle in frame coordinates, how many times it
   changed on that page, and its `kind`. A `screenflow` lists its settled `states` — frame,
   timestamp, how long it was held, and the image file each was written to
-  (`<out>_sub0_state00.png`, …); a `noise` region lists none, because a playing
-  video has no state worth keeping. Where a screen flow **scrolled its own
+  (`<out>_page000_sub000_state000.png`, …); a `noise` region lists none, because a
+  playing video has no state worth keeping. Where a screen flow **scrolled its own
   content**, it also lists `innerDocuments`: the pipeline runs again on that
   rectangle alone, so each becomes a stitch taller than the subframe
-  (`<out>_sub0_doc00.png`, …) with its own `capturedExtent` in the subframe's
-  document coordinates. What separates them is whether the region ever
+  (`<out>_page000_sub000_doc000.png`, …) with its own `capturedExtent` in the
+  subframe's document coordinates. What separates them is whether the region ever
   held still: measured, a fixed video ad 0% of its changes, an embedded phone
   screen 31-39%, a panel tapped 30 times 100%.
+
+  A page image cannot show a screen flow in all of its states, so it shows one —
+  the state the region was left in — and `stampedState` says which. Without that
+  the page canvas has nothing true to show there at all: the per-row vote elects
+  whichever appearance each row's frames agreed on, and with mutually exclusive
+  screens and no majority, adjacent rows elect different ones and the region
+  renders as a superposition. A consumer laying the states out itself knows from
+  `stampedState` which one is already on the page.
 
   The distinction between `capturedExtent` and `documentHeight` is the point.
   Only the first is derivable from the frames; a session that stopped early

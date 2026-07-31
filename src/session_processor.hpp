@@ -40,6 +40,10 @@ public:
         int                                   in_place_changes = 0;
         std::vector<SubframeTracker::State>   states;
         std::vector<SubframeTracker::InnerDoc> inner;
+        // Index into `states` of the appearance the PAGE image shows in `rect`,
+        // or -1 for none. A page cannot show a region in all of its states, so it
+        // shows one and says which — see the stamping step in run().
+        int                                   stamped_state = -1;
     };
 
     struct PageResult {
@@ -128,6 +132,9 @@ private:
     // Absolute-offset evidence for jumps no content matching can follow; shared
     // (unowned) with the registry and every page stitcher.
     std::unique_ptr<ScrollbarTracker> scrollbar_;
+    // Kept past segmentation so a page can be rebuilt once its in-place regions
+    // are known (see the stamping step in run()).
+    std::unique_ptr<PageRegistry> registry_;
 
     // The visit's first stable frame, grayscale (for page identification).
     [[nodiscard]] cv::Mat read_frame_gray(long index) const;

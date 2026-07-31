@@ -344,6 +344,53 @@ def subframe_over(report, box):
     return best
 
 
+def score_stamps(report):
+    """Does each page image really show the subframe state the report claims?
+
+    Needs no ground truth: it holds the report to its own statement. A page cannot
+    show a screen flow in all of its states, so it shows one and names it in
+    `stampedState`; this reads that state's PNG back and compares it against the
+    page's own stitch at the document row the state was seen at (the rect is in
+    viewport coordinates, `frames[]` gives that frame's `vt`). The failure this
+    guards against is silent: a stamp painted at the viewport row instead of the
+    document row lands hundreds of pixels off in a scrolled page and still produces
+    a plausible-looking screenshot.
+
+    Returns None when no page stamped anything.
+    """
+    frames = {f["frame"]: f for f in (report.get("frames") or []) if "frame" in f}
+    worst, n = 0.0, 0
+    for page in report.get("pages", []):
+        stitch = page.get("stitch")
+        img = cv2.imread(stitch) if stitch and os.path.exists(stitch) else None
+        if img is None:
+            continue
+        for sf in page.get("subframes", []):
+            idx = sf.get("stampedState")
+            if idx is None or idx >= len(sf.get("states", [])):
+                continue
+            st = sf["states"][idx]
+            if not st.get("image") or not os.path.exists(st["image"]):
+                continue
+            state = cv2.imread(st["image"])
+            if state is None:
+                continue
+            vt = int((frames.get(st["frame"], {}) or {}).get("vt") or 0)
+            y, x = sf["rect"]["y"] + vt, sf["rect"]["x"]
+            h = min(state.shape[0], img.shape[0] - y)
+            w = min(state.shape[1], img.shape[1] - x)
+            if h <= 0 or w <= 0:
+                worst, n = 255.0, n + 1      # stamped outside its own page
+                continue
+            mad = float(np.abs(img[y:y + h, x:x + w].astype(np.int16)
+                               - state[:h, :w].astype(np.int16)).mean())
+            worst = max(worst, mad)
+            n += 1
+    if n == 0:
+        return None
+    return {"stamps": n, "worstMAD": round(worst, 2), "pass": worst <= 1.0}
+
+
 # ── Multipage-session scoring ─────────────────────────────────────────────────
 def score_multipage(report, gt):
     T = MULTIPAGE_TOLERANCE
@@ -686,10 +733,13 @@ def main():
     report = json.load(open(work_json))
 
     # ── Score ──────────────────────────────────────────────────────────────────
+    # Applies to every session, ground truth or not: the report is checked against
+    # the images the same run wrote.
+    stamps = score_stamps(report)
     if realworld:
         checks, production = score_realworld(report, session)
         scroll, ghost, total_error = None, None, 0
-        passed = checks["pass"]
+        passed = checks["pass"] and (stamps is None or stamps["pass"])
     else:
         scroll = score_scroll(report, gt)
     # A settled full-page reference makes the ghost metric meaningful for any
@@ -700,13 +750,15 @@ def main():
         pass
     elif multipage:
         checks, total_error, seg_pass, fixed_na = score_multipage(report, gt)
-        passed = seg_pass and scroll["pass"] and (ghost is None or ghost["pass"])
+        passed = (seg_pass and scroll["pass"] and (ghost is None or ghost["pass"])
+                  and (stamps is None or stamps["pass"]))
     else:
         allow_pc = os.path.basename(session.rstrip(os.sep)) in PAGECHANGE_EXPECTED
         metrics, total_error, stitch_pass, seg_ok = score_single(report, gt, allow_pc)
         passed = (stitch_pass and scroll["pass"]
                   and (allow_pc or scroll["pageChanges"] == 0)
-                  and (ghost is None or ghost["pass"]))
+                  and (ghost is None or ghost["pass"])
+                  and (stamps is None or stamps["pass"]))
 
     # ── Archive outputs under unique, self-describing names ───────────────────
     now = datetime.now(timezone.utc)
@@ -754,6 +806,8 @@ def main():
         entry["metrics"] = metrics
     if ghost is not None:
         entry["ghost"] = ghost
+    if stamps is not None:
+        entry["stamps"] = stamps
 
     # ── History (same session only) ────────────────────────────────────────────
     history = []
@@ -783,6 +837,10 @@ def main():
               f"  badBlocks={ghost['badBlockFrac']*100:.2f}% "
               f"(tol {GHOST_TOLERANCE['badBlockFrac']*100:.0f}%)"
               f"    ghost: {'PASS' if ghost['pass'] else 'FAIL'}")
+    if stamps is not None:
+        print(f"\n  Stamped subframe states:  {stamps['stamps']} in the page images"
+              f"  worstMAD={stamps['worstMAD']} (tol 1.0)"
+              f"    stamps: {'PASS' if stamps['pass'] else 'FAIL'}")
     print(f"\n  overall: {'PASS' if passed else 'FAIL'}   ({elapsed:.1f}s)")
 
     if prev is not None:

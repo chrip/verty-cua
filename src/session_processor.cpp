@@ -199,8 +199,9 @@ bool SessionProcessor::run()
     // Assign every visit to a page (REVISIT merges, NAVIGATE starts a page).
     // Content-free visits — blank loading screens between navigations on real
     // recordings — are dropped: a page has content, a white frame does not.
-    PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_,
-                          sensitivity_, scrollbar_.get());
+    registry_ = std::make_unique<PageRegistry>(video_path_, frame_w_, frame_h_, fps_,
+                                               verbose_, sensitivity_, scrollbar_.get());
+    PageRegistry& registry = *registry_;
     // The stitchers run their own classifier passes, so they need what pass 1
     // learned about in-place regions too.
     registry.set_subframes(subframe_rects);
@@ -374,6 +375,63 @@ bool SessionProcessor::run()
                           if (a.rect.y != b.rect.y) return a.rect.y < b.rect.y;
                           return a.rect.x < b.rect.x;
                       });
+
+        // ── One settled appearance per in-place region, in the page image ─────
+        // The canvas has nothing true to show inside such a region: the per-row
+        // vote elects whichever appearance a row's frames agreed on, and with
+        // several mutually exclusive appearances and no majority, adjacent rows
+        // elect different ones — a superposition of screens under otherwise
+        // correct chrome. Stamping one settled state replaces that with an instant
+        // the region actually had. Every state stays in the report with its own
+        // image, so nothing is lost, only chosen.
+        //
+        // The last settled state is the one chosen, because an independent ground
+        // truth says so: the browser's own full-page reference for the tapped-panel
+        // fixture is captured after the interactions, and its panel is
+        // pixel-identical to that region's last settled state (the fixture cycles
+        // three appearances over 30 taps, and the reference holds the one tap 30
+        // left behind). A page screenshot is the page as the session left it, and
+        // that is the appearance it agrees with.
+        for (size_t pi = 0; pi < pages_.size() && pi < registry_->records().size(); ++pi) {
+            PageResult& page = pages_[pi];
+            // A state can only be placed if this page knows where the viewport was
+            // on its frame — its rectangle is in viewport coordinates and the canvas
+            // is in document coordinates. So the state chosen is the last one whose
+            // frame this page actually held; a page image missing a region is
+            // honest, one showing it at a guessed document row is not.
+            auto offset_of = [&page](long frame, long& vt) {
+                for (const PageStitcher::VisitTrace& t : page.visits) {
+                    const long local = frame - t.visit.firstFrame;
+                    if (local < 0 || local >= static_cast<long>(t.vt_by_frame.size()))
+                        continue;
+                    vt = t.vt_by_frame[static_cast<size_t>(local)];
+                    return true;
+                }
+                return false;
+            };
+            bool stamped = false;
+            for (PageSubframe& sf : page.subframes) {
+                if (!sf.screenflow) continue;
+                for (size_t si = sf.states.size(); si-- > 0;) {
+                    const auto& st = sf.states[si];
+                    long vt = 0;
+                    if (st.image.empty() || !offset_of(st.frame, vt)) continue;
+                    registry_->records()[pi].stitcher->add_stamp(sf.rect, st.image, st.frame);
+                    sf.stamped_state = static_cast<int>(si);
+                    stamped = true;
+                    if (verbose_)
+                        std::cout << "[page " << pi << "] stamping its in-place region "
+                                  << sf.rect.width << "×" << sf.rect.height << " at ("
+                                  << sf.rect.x << "," << sf.rect.y << ") with state "
+                                  << si << " of " << sf.states.size() << " (frame "
+                                  << st.frame << ", document row "
+                                  << sf.rect.y + vt << ")\n";
+                    break;
+                }
+            }
+            if (stamped)
+                page.image = registry_->records()[pi].stitcher->reconstruct();
+        }
     }
 
     return !pages_.empty();

@@ -606,6 +606,8 @@ cv::Mat PageStitcher::reconstruct()
     // the earlier writes are stale and everything is refolded. Growth of the
     // document is not a change of geometry — the buffer is extended and the
     // existing rows keep their document coordinates.
+    // Stamps are NOT part of it: they are painted over the finished canvas and
+    // change no write.
     const bool geometry_changed = content_.empty()
                                || interior != folded_interior_
                                || overlays_ != folded_overlays_;
@@ -812,6 +814,36 @@ cv::Mat PageStitcher::reconstruct()
                               : o.y;
         if (dst_y < 0 || dst_y + o.height > static_cast<int>(doc_h)) continue;
         src_frame(o).copyTo(canvas(cv::Rect(o.x, dst_y, o.width, o.height)));
+    }
+
+    // One settled appearance of each in-place region, at the DOCUMENT row it was
+    // seen at. The rectangle is in viewport coordinates and the canvas is in
+    // document coordinates, so the viewport top of the state's own frame is what
+    // converts one to the other — stamping at the viewport row instead puts a
+    // region from deep in a scrolled page near the top of the stitch (measured on
+    // the tapped-gallery fixture: 234 of 255 worst-block MAD against the browser's
+    // full-page reference). Painted after the overlays so that a region and an
+    // overlay claiming the same pixels resolve in favour of the region, whose
+    // appearance is the one that was chosen deliberately.
+    for (const Stamp& st : stamps_) {
+        if (st.image.empty()) continue;
+        // A frame this page never held has no offset here, and guessing one (0,
+        // say) would paint the region at a document row it was never at. Skipped
+        // instead: a page image missing one region is honest, a page image showing
+        // it in the wrong place is not.
+        long vt = -1;
+        for (const VisitTrace& t : visits_)
+            if (st.frame >= t.visit.firstFrame && st.frame <= t.visit.lastFrame) {
+                vt = offset_of(t, st.frame);
+                break;
+            }
+        if (vt < 0) continue;
+        const cv::Rect at(st.rect.x, st.rect.y + static_cast<int>(vt),
+                          st.rect.width, st.rect.height);
+        const cv::Rect r = at & cv::Rect(0, 0, frame_w_, static_cast<int>(doc_h));
+        if (r.width <= 0 || r.height <= 0) continue;
+        if (st.image.rows < r.height || st.image.cols < r.width) continue;
+        st.image(cv::Rect(0, 0, r.width, r.height)).copyTo(canvas(r));
     }
 
     // Last, so the bar wins wherever an overlay bbox reached the edge — which is

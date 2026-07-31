@@ -73,6 +73,21 @@ public:
     // one, its own scrolling is the document.
     void set_subframes(std::vector<cv::Rect> rects) { subframes_ = std::move(rects); }
 
+    // A region that changes IN PLACE has no single appearance, so the canvas has
+    // nothing true to show there: the per-row vote elects whichever appearance a
+    // row's frames agreed on, and with several mutually exclusive appearances and
+    // no majority, adjacent rows elect different ones — which renders as a
+    // superposition of screens. A STAMP replaces that with one settled appearance,
+    // painted over the finished canvas. `rect` is in viewport coordinates and
+    // `frame` is the frame `image` was taken from, which is what places it in
+    // document coordinates. Nothing else about the reconstruction changes — the
+    // rows underneath are still voted on and still written — so a stamp can only
+    // ever affect the pixels it covers. The report lists every state with its own
+    // image for anyone who needs the rest.
+    void add_stamp(const cv::Rect& rect, const cv::Mat& image, long frame) {
+        stamps_.push_back({rect, image, frame});
+    }
+
     // Analyze one visit of this page (runs both analysis passes).
     //
     // bridged marks a visit that CONTINUES the previous one after a jump too
@@ -150,6 +165,8 @@ private:
     std::string video_path_;
     cv::Rect    roi_;          // empty = the whole frame
     std::vector<cv::Rect> subframes_;
+    struct Stamp { cv::Rect rect; cv::Mat image; long frame = 0; };
+    std::vector<Stamp>    stamps_;
     int         frame_w_;
     int         frame_h_;
     double      fps_;
