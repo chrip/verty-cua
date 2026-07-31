@@ -172,10 +172,22 @@ void SubframeTracker::finish()
     //    7-18% of the frame (lab panel 7%, embedded phone screen 12%, fixed video
     //    ad 18%).
     std::vector<cv::Rect> regions;
-    for (const Group& g : groups)
-        if (static_cast<int>(g.boxes.size()) >= SUBFRAME_MIN_CHANGES
-            && g.median.area() >= SUBFRAME_MIN_AREA_FRAC * frame_area)
-            regions.push_back(g.median);
+    for (const Group& g : groups) {
+        if (static_cast<int>(g.boxes.size()) < SUBFRAME_MIN_CHANGES) continue;
+        if (g.median.area() < SUBFRAME_MIN_AREA_FRAC * frame_area) continue;
+        // A subframe is an element INSIDE the content flow, so it is narrower than
+        // the content area; a region spanning the viewport's width is the page's own
+        // content changing, not a frame within it. Without this the states of a
+        // product grid — each a hover preview on one tile — were all attributed to
+        // one full-width band and written as crops of that band, so every image
+        // showed the wrong strip of page: measured on a shop catalogue, eight pages
+        // reporting the identical 1916×398 region while the individual changes were
+        // 356×160 tiles scattered across it, each covering 1-23% of what it was
+        // cropped to. The lab panels and the real embedded phone screens cover
+        // 90-127% of theirs.
+        if (g.median.width > SUBFRAME_MAX_WIDTH_FRAC * frame_w_) continue;
+        regions.push_back(g.median);
+    }
     // Largest first, so a region that is part of a bigger one folds into it.
     std::sort(regions.begin(), regions.end(),
               [](const cv::Rect& a, const cv::Rect& b) { return a.area() > b.area(); });

@@ -125,6 +125,13 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // never existed and every viewport-fixed element on the page was written once
     // per phantom offset. The changed mask is computed here and reused by the
     // page-change spread below, so the test costs a count, not a pass.
+    //
+    // Every rect handed here is already narrower than SUBFRAME_MAX_WIDTH_FRAC of
+    // the frame: SubframeTracker will not report a wider one, because a region
+    // spanning the viewport's width is the page's own content area. That matters
+    // here too — refusing a dy inside such a region refuses genuine document
+    // scrolls, which cost session_manyjumps its re-localization when the rule was
+    // first written without the width bound.
     cv::Mat smooth, changed;
     cv::blur(diff, smooth, cv::Size(3, 3));
     cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
@@ -136,7 +143,6 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
             for (const cv::Rect& r : subframes) {
                 const cv::Rect c = r & bounds;
                 if (c.area() <= 0) continue;
-                if (c.width > SUBFRAME_MAX_WIDTH_FRAC * changed.cols) continue;
                 if (cv::countNonZero(changed(c))
                     >= SUBFRAME_CONFINED_CHANGE_FRAC * total) { confined = true; break; }
             }

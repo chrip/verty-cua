@@ -344,9 +344,23 @@ bool SessionProcessor::run()
                 const int p = page_of(d.first_frame);
                 if (p >= 0) slot(p).inner.push_back(d);
             }
-            for (auto& [p, ps] : per_page)
-                if (p >= 0 && static_cast<size_t>(p) < pages_.size())
-                    pages_[static_cast<size_t>(p)].subframes.push_back(std::move(ps));
+            for (auto& [p, ps] : per_page) {
+                if (p < 0 || static_cast<size_t>(p) >= pages_.size()) continue;
+                // Was the region actually anchored to the viewport while these
+                // states happened? Its rect is a viewport rect, so if the document
+                // moved between them, the rect does not name one region and the
+                // crops are strips of whatever was at those coordinates.
+                long lo = -1, hi = -1;
+                for (const auto& st : ps.states) {
+                    if (st.frame < 0 || st.frame >= frame_count_) continue;
+                    const long v = frames_[static_cast<size_t>(st.frame)].vt;
+                    if (v < 0) continue;
+                    if (lo < 0 || v < lo) lo = v;
+                    if (hi < 0 || v > hi) hi = v;
+                }
+                if (lo >= 0 && hi - lo > SUBFRAME_MAX_ANCHOR_DRIFT) continue;
+                pages_[static_cast<size_t>(p)].subframes.push_back(std::move(ps));
+            }
         }
         for (PageResult& pg : pages_)
             std::sort(pg.subframes.begin(), pg.subframes.end(),

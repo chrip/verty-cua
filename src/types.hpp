@@ -242,6 +242,18 @@ constexpr double SUBFRAME_CONFINED_CHANGE_FRAC = 0.90;
 // phone screens, a fixed video ad, the lab panels), content columns that must not
 // 50-61%. The gate sits in the empty middle.
 constexpr double SUBFRAME_MAX_WIDTH_FRAC = 0.40;
+// A subframe's rectangle is a VIEWPORT rectangle, so reporting one asserts that the
+// rectangle names the same content every time it is cropped. That holds only while
+// the document does not move underneath it. If it does, consecutive states are
+// crops of whatever happened to be at those coordinates — which is exactly what a
+// product grid produced: hover previews on tiles that had scrolled between states,
+// written as strips of page at inconsistent offsets.
+//
+// Measured document-offset spread across a region's own states: lab panels 0px,
+// real embedded phone mockups 0px and 68px (the 68 being a residual false scroll of
+// its own), against 120-720px for a scrolling product grid and 2759-3779px for a
+// news article's content column.
+constexpr long   SUBFRAME_MAX_ANCHOR_DRIFT = 100;
 // Smallest share of the frame a subframe may be. Without it, every text block of
 // a page that reloads its own content qualifies — measured on the auto-refreshing
 // news portal: 79 candidate regions of 0.3-3% of the frame, several with two
