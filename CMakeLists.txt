@@ -17,6 +17,7 @@ add_executable(verty
     src/scrollbar_map.cpp
     src/scrollbar_tracker.cpp
     src/session_segmenter.cpp
+    src/subframe_stitcher.cpp
     src/subframe_tracker.cpp
     src/session_processor.cpp
     src/transition_classifier.cpp

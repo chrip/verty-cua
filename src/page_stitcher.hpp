@@ -51,9 +51,14 @@ public:
     // scrollbar: located vertical scrollbar of the session, or nullptr. Used to
     // calibrate this page's thumb→offset map, which lets a later visit be
     // re-localized after a jump that content matching cannot follow.
+    // `roi` makes this stitch a SUBFRAME of the video rather than the whole
+    // frame: frame_w/frame_h are then the rect's size and every frame read is
+    // cropped to it. Nothing else in the class changes — fixed bands, offsets,
+    // row reconciliation and gaps all mean the same thing one level down.
     PageStitcher(std::string video_path, int frame_w, int frame_h, double fps,
                  bool verbose = false, int page_id = 0,
-                 const ScrollbarTracker* scrollbar = nullptr);
+                 const ScrollbarTracker* scrollbar = nullptr,
+                 const cv::Rect& roi = cv::Rect());
 
     // Analyze one visit of this page (runs both analysis passes).
     //
@@ -130,6 +135,7 @@ public:
 
 private:
     std::string video_path_;
+    cv::Rect    roi_;          // empty = the whole frame
     int         frame_w_;
     int         frame_h_;
     double      fps_;

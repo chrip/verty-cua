@@ -26,7 +26,7 @@ anything.
 > embedded prototype tapped through screen by screen) each state is written as its
 > own image, while a region that never holds still is called noise and kept out of
 > the document model — and a machine-readable session report (`-r`, schema 4). All
-> measured by a reproducible benchmark: thirteen recorded lab sessions plus five
+> measured by a reproducible benchmark: fourteen recorded lab sessions plus five
 > real screen recordings, scored by one command.
 >
 > Still a prototype: fixed-band edges carry a declared uncertainty (bands only
@@ -132,7 +132,11 @@ This produces `./build/verty`.
   changed, and its `kind`. A `screenflow` lists its settled `states` — frame,
   timestamp, how long it was held, and the image file each was written to
   (`<out>_sub0_state00.png`, …); a `noise` region lists none, because a playing
-  video has no state worth keeping. What separates them is whether the region ever
+  video has no state worth keeping. Where a screen flow **scrolled its own
+  content**, it also lists `innerDocuments`: the pipeline runs again on that
+  rectangle alone, so each becomes a stitch taller than the subframe
+  (`<out>_sub0_doc00.png`, …) with its own `capturedExtent` in the subframe's
+  document coordinates. What separates them is whether the region ever
   held still: measured, a fixed video ad 0% of its changes, an embedded phone
   screen 31-39%, a panel tapped 30 times 100%.
 
@@ -207,7 +211,9 @@ part reproduces for anyone who records their own equivalents.
 src/            the tool — SessionProcessor → SessionSegmenter → PageRegistry
                 (PageIdentifier, ScrollbarTracker + ScrollbarMap) →
                 PageStitcher; TransitionClassifier, ScrollDetector,
-                FixedAccumulator, SubframeTracker, VideoSource, SessionReport
+                FixedAccumulator, SubframeTracker + SubframeStitcher (the
+                pipeline applied to a subframe's own rectangle),
+                VideoSource, SessionReport
 test_data/      HTML fixtures, session recorder, mp4 muxer, benchmark + results log
 CMakeLists.txt
 ```

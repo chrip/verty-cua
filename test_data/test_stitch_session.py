@@ -86,6 +86,10 @@ MULTIPAGE_TOLERANCE = {
     "fixedPx": 48,           # per band, only for visits that scrolled ≥ minScrollForFixed
     "minScrollForFixed": 150,
     "statesPx": 2,           # settled states vs taps: a tap can read as a duplicate
+    # Inner document extent. Dead reckoning inside a subframe drifts like it does
+    # in a document, over more steps and with less content to correct against:
+    # measured 2433px against 2495 on the inner-scroll fixture (2.5% of 335 steps).
+    "innerExtentPx": 150,
     "vtStartPx": 32,         # revisit entry offset vs ground truth
 }
 
@@ -317,22 +321,25 @@ def print_single(metrics, total_error, stitch_pass, scroll, report, allow_page_c
 def subframe_over(report, box):
     """The reported subframe that covers a declared region, if any.
 
-    Matched by overlap against the declared box rather than by exact geometry: the
-    detected rectangle is the median of what actually repainted, which sits a pixel
-    or two inside the element's own bounds."""
-    bx, by = float(box["x"]), float(box["y"])
-    bw, bh = float(box["width"]), float(box["height"])
-    best, best_ratio = None, 0.5
+    The declared box is in DOCUMENT coordinates and a reported rect is in FRAME
+    coordinates, so the vertical positions are not comparable without knowing the
+    scroll offset. What is comparable: the columns, and the size. A detected rect
+    is also not the element's own box — it is the part of the region that actually
+    repaints, so a panel whose app bar never changes is reported as its scrolling
+    body alone (measured: 300x209 of a 320x260 panel).
+    """
+    bx, bw, bh = float(box["x"]), float(box["width"]), float(box["height"])
+    best, best_score = None, 0.0
     for sf in report.get("subframes", []):
         r = sf["rect"]
-        ix = max(0.0, min(bx + bw, r["x"] + r["w"]) - max(bx, r["x"]))
-        # The declared box is in DOCUMENT coordinates and the subframe rect in
-        # frame coordinates, so only the horizontal extent and the size can be
-        # compared without knowing the scroll offset at the time.
-        iy = min(bh, r["h"]) if abs(bh - r["h"]) <= 24 else 0.0
-        ratio = (ix * iy) / max(1.0, bw * bh)
-        if ratio > best_ratio:
-            best, best_ratio = sf, ratio
+        overlap = max(0.0, min(bx + bw, r["x"] + r["w"]) - max(bx, r["x"]))
+        if overlap < 0.7 * r["w"]:
+            continue                       # not the same columns
+        if not (0.4 * bh <= r["h"] <= 1.2 * bh):
+            continue                       # not the same kind of size
+        score = r["w"] * r["h"]
+        if score > best_score:
+            best, best_score = sf, score
     return best
 
 
@@ -400,6 +407,23 @@ def score_multipage(report, gt):
             check(f"page{i}.animatedRegionIsNoise",
                   0 if (sf and sf["kind"] == "noise") else 1, 0, 0)
             check(f"page{i}.animatedRegionStates", sf["settledStates"] if sf else 0, 0, 0)
+
+        # A subframe whose own content SCROLLS is a document one level down: the
+        # page must not grow by it (that is checked by page{i}.height above, which
+        # expects only what the OUTER scroll covered), and the subframe must be
+        # reported with a stitched inner document as tall as the content that
+        # passed through its window.
+        inner = gt.get("innerScroll")
+        if inner and i == 0:
+            sf = subframe_over(report, inner["doc"])
+            docs = (sf or {}).get("innerDocuments") or []
+            check("innerDocCount", len(docs), 1, 0)
+            if docs and sf:
+                # Expected against the DETECTED window, not the element's own
+                # height: the rectangle is the part of the region that actually
+                # repaints, which sits a few pixels inside the scroll box.
+                want = inner["maxScrollTop"] + sf["rect"]["h"]
+                check("innerDocExtent", docs[0]["capturedExtent"], want, T["innerExtentPx"])
 
         mut = gpage.get("mutatingRegion")
         if mut:

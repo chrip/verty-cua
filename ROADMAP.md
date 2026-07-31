@@ -1305,6 +1305,73 @@ next step is recursion: verty on the subframe, producing one tall stitch per sta
 that scrolled. That is also what would finally give the embedded-phone case its
 full-page screens rather than viewport-sized ones.
 
+### Recursion: verty inside a subframe — 2026-07-31
+
+A subframe that scrolls its own content is a document, and everything needed to
+reconstruct a document was already written — classify its transitions, track its
+offset, reconcile its rows, stitch it. The only thing in the way was that all of
+it assumed "frame" meant the whole frame. It does not have to: `VideoSource` now
+takes a rectangle, so the same `TransitionClassifier` and the same `PageStitcher`
+read a smaller frame and mean the same things one level down. `SubframeStitcher`
+is the bookkeeping around that, and it is 80 lines.
+
+**New fixture, `--plan gallery_scroll`.** The same gallery page loaded with
+`#innerscroll`: the panel holds a 2502px document — 40 numbered, individually
+coloured rows, so a misplaced row is visible and no scroll detector can alias one
+onto another — inside a 216px window, and the plan scrolls that window
+0 → 1257 → 2286 → 457 while the page itself never moves after bringing the panel
+into view. The recorder gained a `scrollEl` step for it, and the ground truth
+carries the inner offset per frame.
+
+**Result on it:** the document stays 1457px (only what the outer scroll covered,
+which is the point — a document model must not grow because something inside it
+scrolled), and the subframe is reported with one inner document of **300×2433px**
+reconstructed from a 209px window, rows 1 through 40 in order. Ground truth for
+that window is 2495px, so it is 62px short — 2.5% over 335 dead-reckoned steps,
+which is what dead reckoning costs inside a region with less content to correct
+against than a page has. Asserted as `innerDocCount` and `innerDocExtent`.
+
+**Two measurements changed the design.** Both were wrong in the same direction —
+counting the page's own movement as the subframe's:
+
+- A region that SCROLLS is invisible to change detection built for swaps: it only
+  changes the boundaries between its rows, so its changed mask is a set of thin
+  strips, each below the pixel floor. Measured: 451 frames of a panel scrolling
+  2286px produced **zero** detected regions. A morphological close over
+  `SUBFRAME_CLOSE_PX` merges strips that belong to one region while leaving two
+  regions of a page apart.
+- An inner run has to be bounded by the DOCUMENT's own movement, because a
+  rectangle fixed in frame coordinates looks at page content sliding past while
+  the page scrolls, and the inner classifier cannot tell that from the subframe
+  scrolling itself. Without that bound the fixture's inner document came out 476px
+  too tall. Bounding it on the classifier's `Scroll` verdicts is not enough
+  either — on the auto-refreshing news portal those verdicts are 4 for ~25 real
+  scrolls, and using them yielded a 4085px "inner document" that was the article
+  scrolling. The reliable signal is the per-frame OFFSET trace, so the recursion
+  runs at the end of the session pass, after that trace exists.
+
+**On real data.** The embedded prototype now yields two inner documents taller
+than its own window: a `Meldeadresse` form (703px of a 507px window — street,
+house number, postcode, city, country, with its BACK/NEXT bar) and a TAN
+confirmation screen (715px). Both were previously three unrelated crops. rw1's
+content column is reported as a subframe with a legible 1325px inner document —
+the page refreshes its own teasers, so "a region that changed in place and then
+scrolled" is a true description of it, and the stitch is genuinely better than
+what the page-level pass got for that visit (1015px). Worth stating plainly: the
+label is generous, the image is right.
+
+**Cost:** one classification pass over the subframe's rectangle, plus the
+stitcher's own passes for each run that scrolled — and only for runs that
+scrolled, since a run that never moved is already shown whole by its single
+settled frame. Measured end to end: the news portal 15.6s → 15.8s, the embedded
+prototype 62s → 66s. All 19 sessions PASS with every previous `totalError` and
+ghost score identical.
+
+**Not done:** the inner document has no equivalent of the scrollbar map, so its
+extent is dead reckoning only and it cannot say how much of the inner document it
+never reached. Nested subframes (a subframe inside a subframe) are not attempted —
+nothing in the corpus has one, so there is nothing to measure a design against.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

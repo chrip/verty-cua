@@ -21,5 +21,6 @@ public:
                       const std::string& video_path,
                       const SessionProcessor& session,
                       const std::vector<std::string>& stitch_paths,
-                      const std::vector<std::vector<std::string>>& subframe_state_paths = {});
+                      const std::vector<std::vector<std::string>>& subframe_state_paths = {},
+                      const std::vector<std::vector<std::string>>& subframe_doc_paths = {});
 };

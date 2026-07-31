@@ -250,6 +250,32 @@ on a version of this plan that played while scrolling: the host document fractur
 into 3 pages instead of 1 and lost 7 of 46 scroll events. Keeping the plan still is
 what makes this fixture about one thing.
 
+### A subframe that scrolls its own content (2026-07-31)
+
+```bash
+node record_session.mjs --plan gallery_scroll         # → session_gallery_scroll/
+python3 frames_to_mp4.py session_gallery_scroll
+```
+
+The same gallery page with `#innerscroll`: the panel holds a **2502px** document
+(40 numbered, individually coloured rows — a misplaced row is visible and no
+detector can alias one onto another) inside a **216px** window, and the plan
+scrolls that window `0 → 1257 → 2286 → 457` while the page never moves after
+bringing the panel into view. The recorder's `scrollEl` step drives it and records
+`innerScrollTop` per frame.
+
+Two things must hold, and both are asserted:
+
+| check | measured | meaning |
+|---|---|---|
+| `page0.height` | 1457 | the document is only what the OUTER scroll covered — it must not grow because something inside it scrolled |
+| `innerDocCount` | 1 | one inner document, not one per pause |
+| `innerDocExtent` | 2433 of 2495 | the stitch from a 209px window, 2.5% short over 335 dead-reckoned steps |
+
+The three gallery plans together are the decision tree in one page: `gallery`
+settles into states (screen flow), `gallery_video` never settles (noise),
+`gallery_scroll` scrolls (screen flow with a stitched inner document).
+
 The benchmark auto-detects the schema and scores multipage sessions on:
 page count, navigation count, per-navigation **boundary error** (first stable
 frame vs. ground truth, tol ±3), per-page width/height vs. **what the visit

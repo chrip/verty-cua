@@ -1,4 +1,5 @@
 #include "session_processor.hpp"
+#include "subframe_stitcher.hpp"
 #include <iostream>
 
 SessionProcessor::SessionProcessor(std::string video_path, bool verbose,
@@ -253,6 +254,46 @@ bool SessionProcessor::run()
                 f.vt     = t.vt_by_frame[k];
                 f.reason.clear();
             }
+
+    // ── Recursion into subframes ─────────────────────────────────────────────
+    // A subframe that scrolled its own content is a document, so the same
+    // classifier and the same stitcher run on its rectangle (see
+    // subframe_stitcher.hpp). Only screen flows are worth the passes: a region
+    // classified as noise has no document to recover.
+    //
+    // It runs HERE, after the per-frame offsets exist, because the inner runs have
+    // to be bounded by the DOCUMENT's own movement — a rectangle fixed in frame
+    // coordinates looks at page content sliding past while the page scrolls, and
+    // the inner classifier cannot tell that from the subframe scrolling itself.
+    // The classifier's own Scroll verdicts are not a reliable substitute:
+    // measured on the auto-refreshing news portal, where its ad churn leaves the
+    // session-level stream with 4 Scroll verdicts for ~25 real scrolls, using them
+    // produced a 4085px "inner document" that was simply the article scrolling.
+    if (!subframes_.empty()) {
+        std::vector<bool> doc_moved(static_cast<size_t>(frame_count_), false);
+        for (long i = 1; i < frame_count_; ++i) {
+            const auto& a = frames_[static_cast<size_t>(i - 1)];
+            const auto& b = frames_[static_cast<size_t>(i)];
+            // vt = -1 means the frame carries no offset (a page-change window or
+            // a blank visit): unknown counts as moved, because a run may not span
+            // a gap in the document's own trace.
+            doc_moved[static_cast<size_t>(i)] = a.vt < 0 || b.vt < 0 || a.vt != b.vt;
+        }
+        for (size_t i = 0; i < subframes_.size(); ++i) {
+            if (!subframes_[i].is_screenflow()) continue;
+            SubframeStitcher inner(video_path_, fps_, verbose_);
+            for (auto& d : inner.run(subframes_[i].rect, 0, frame_count_ - 1,
+                                     static_cast<int>(i), doc_moved)) {
+                SubframeTracker::InnerDoc id;
+                id.first_frame = d.first_frame;
+                id.last_frame  = d.last_frame;
+                id.extent      = d.extent;
+                id.scrolls     = d.scrolls;
+                id.image       = std::move(d.image);
+                subframes_[i].inner.push_back(std::move(id));
+            }
+        }
+    }
 
     return !pages_.empty();
 }

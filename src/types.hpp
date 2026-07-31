@@ -212,6 +212,18 @@ constexpr int    SUBFRAME_MIN_CHANGES    = 3;
 // 1918×956 frame. A ratio keeps a gallery and a ticker apart while tolerating the
 // jitter of which part of a region repainted.
 constexpr double SUBFRAME_MIN_IOU        = 0.35;
+// Gap (px) across which two changed patches are treated as one region. A region
+// that scrolls its own content changes only the boundaries between its rows, so
+// without closing that gap its changed mask is a set of thin strips, each below
+// SUBFRAME_MIN_CHANGED_PX, and the region is never detected. 25px is wider than
+// the row gaps measured in the fixtures (6-14px) and far narrower than the space
+// between two regions of a page.
+constexpr int    SUBFRAME_CLOSE_PX       = 25;
+// Inner scroll transitions a run must contain before it is worth stitching. A run
+// that never scrolled is already fully shown by its one settled frame, and
+// stitching it would cost three more passes over the video to reproduce a crop
+// that already exists.
+constexpr int    SUBFRAME_MIN_INNER_SCROLLS = 2;
 // Smallest share of the frame a subframe may be. Without it, every text block of
 // a page that reloads its own content qualifies — measured on the auto-refreshing
 // news portal: 79 candidate regions of 0.3-3% of the frame, several with two

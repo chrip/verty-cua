@@ -34,7 +34,8 @@ bool SessionReport::write(const std::string& path,
                           const std::string& video_path,
                           const SessionProcessor& session,
                           const std::vector<std::string>& stitch_paths,
-                          const std::vector<std::vector<std::string>>& subframe_state_paths)
+                          const std::vector<std::vector<std::string>>& subframe_state_paths,
+                          const std::vector<std::vector<std::string>>& subframe_doc_paths)
 {
     std::ofstream out(path);
     if (!out) return false;
@@ -150,7 +151,26 @@ bool SessionReport::write(const std::string& path,
             << ", \"w\": " << sf.rect.width << ", \"h\": " << sf.rect.height << "}, "
             << "\"kind\": \"" << (sf.is_screenflow() ? "screenflow" : "noise") << "\", "
             << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
-            << "\"settledStates\": " << sf.states.size() << ", \"states\": [";
+            << "\"settledStates\": " << sf.states.size() << ", ";
+        // Inner documents: runs the subframe SCROLLED through, stitched by the
+        // same pipeline one level down. Their images are taller than the subframe
+        // — that is the whole point — so `capturedExtent` is in the subframe's own
+        // document coordinates, not the frame's.
+        out << "\"innerDocuments\": [";
+        for (size_t k = 0; k < sf.inner.size(); ++k) {
+            const auto& d = sf.inner[k];
+            const bool have = i < subframe_doc_paths.size()
+                              && k < subframe_doc_paths[i].size()
+                              && !subframe_doc_paths[i][k].empty();
+            out << (k ? ", " : "")
+                << "{\"firstFrame\": " << d.first_frame
+                << ", \"lastFrame\": " << d.last_frame
+                << ", \"capturedExtent\": " << d.extent
+                << ", \"innerScrolls\": " << d.scrolls
+                << ", \"image\": " << (have ? "\"" + escape(subframe_doc_paths[i][k]) + "\"" : "null")
+                << "}";
+        }
+        out << "], \"states\": [";
         if (sf.is_screenflow()) {
             for (size_t k = 0; k < sf.states.size(); ++k) {
                 const auto& st = sf.states[k];

@@ -7,8 +7,8 @@
 // ── construction ──────────────────────────────────────────────────────────────
 PageStitcher::PageStitcher(std::string video_path, int frame_w, int frame_h,
                            double fps, bool verbose, int page_id,
-                           const ScrollbarTracker* scrollbar)
-    : video_path_(std::move(video_path)),
+                           const ScrollbarTracker* scrollbar, const cv::Rect& roi)
+    : video_path_(std::move(video_path)), roi_(roi),
       frame_w_(frame_w), frame_h_(frame_h), fps_(fps),
       verbose_(verbose), page_id_(page_id),
       accumulator_(frame_w, frame_h),
@@ -29,7 +29,7 @@ PageStitcher::PageStitcher(std::string video_path, int frame_w, int frame_h,
 
 VideoSource PageStitcher::open_at(const PageVisit& v) const
 {
-    VideoSource video(video_path_);
+    VideoSource video(video_path_, roi_);
     if (video.ok()) video.skip_to(v.firstFrame);
     return video;
 }
@@ -391,7 +391,7 @@ void PageStitcher::extract_overlays()
     if (frameA < 0 || frameB < 0 || frameA == frameB) return;
 
     auto read_frame = [&](long index) {
-        VideoSource video(video_path_);
+        VideoSource video(video_path_, roi_);
         VideoSource::Frame f;
         if (!video.ok() || !video.skip_to(index) || !video.next(f)) return cv::Mat();
         return f.bgr;

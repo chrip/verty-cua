@@ -204,12 +204,33 @@ const SCREENS = [
 // still — a playing video, an animated ad, a spinner. Same geometry, same
 // position, same everything else, so a benchmark can attribute a difference in
 // behaviour to the axis under test and nothing else.
-const VIDEO_MODE = location.hash === '#video';
+const VIDEO_MODE  = location.hash === '#video';
+// A third mode: the panel holds a document TALLER than itself and that document
+// scrolls inside it, while the page around it does not move. This is the case a
+// document model cannot express by growing the page — the outer document is one
+// viewport tall the whole time.
+const SCROLL_MODE = location.hash === '#innerscroll';
 let screenIdx = 0;
 const panel = document.getElementById('panel');
 function render() { panel.innerHTML = SCREENS[screenIdx]; }
 
-if (VIDEO_MODE) {
+if (SCROLL_MODE) {
+  // A phone-like screen: a fixed app bar, then a long list that scrolls under it.
+  // Deliberately high-contrast and non-periodic — every row carries its own index
+  // and its own colour, so a stitch that misplaces a row is visible, and so a
+  // scroll detector cannot alias one row onto another.
+  const rows = [];
+  for (let i = 1; i <= 40; i++) {
+    const hue = (i * 37) % 360;
+    rows.push(`<div style="height:56px;margin:6px 0;border-radius:6px;display:flex;
+        align-items:center;padding:0 10px;font:600 15px sans-serif;color:#fff;
+        background:hsl(${hue},55%,38%)">ROW ${i} &nbsp;·&nbsp; ${'▮'.repeat(1 + (i % 5))}</div>`);
+  }
+  panel.innerHTML =
+    `<div class="bar" style="background:#0a84ff;color:#fff">Activity</div>
+     <div id="panel-scroll" style="height:216px;overflow-y:scroll;background:#f2f5f8;
+          padding:8px">${rows.join('')}</div>`;
+} else if (VIDEO_MODE) {
   panel.innerHTML = '<canvas id="panel-canvas" width="320" height="260"></canvas>';
   const cv = document.getElementById('panel-canvas');
   const ctx = cv.getContext('2d');
@@ -281,9 +302,16 @@ window.addEventListener('load', () => {
     // (and must not be claimed as a fixed overlay), a region that never settles
     // is noise (and its pixels are unpredictable, so the ghost metric has to
     // skip it).
-    ...(VIDEO_MODE ? { dynamicRegions: [{ kind: 'animated', doc: docBox(panel) }] }
-                   : { mutatingRegion: reg.panel }),
-    screens: VIDEO_MODE ? 0 : SCREENS.length,
+    ...(VIDEO_MODE ? { dynamicRegions: [{ kind: 'animated', doc: docBox(panel) }] } : {}),
+    ...(SCROLL_MODE ? { innerScroll: (() => {
+            const sc = document.getElementById('panel-scroll');
+            return { doc: docBox(panel),
+                     viewportHeight: sc.clientHeight,
+                     contentHeight: sc.scrollHeight,
+                     maxScrollTop: sc.scrollHeight - sc.clientHeight };
+          })() } : {}),
+    ...(VIDEO_MODE || SCROLL_MODE ? {} : { mutatingRegion: reg.panel }),
+    screens: (VIDEO_MODE || SCROLL_MODE) ? 0 : SCREENS.length,
   };
   console.log('[GROUND TRUTH]', window.GROUND_TRUTH);
 });

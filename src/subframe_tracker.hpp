@@ -41,10 +41,22 @@ public:
         cv::Mat   image;         // the SUBFRAME rect of `frame`, filled afterwards
     };
 
+    // An inner document of the subframe: a run of its own frames that it scrolled
+    // through, stitched by the same pipeline one level down (see
+    // subframe_stitcher.hpp). A subframe that only ever swapped screens has none.
+    struct InnerDoc {
+        long    first_frame = 0;
+        long    last_frame  = 0;
+        long    extent      = 0;
+        int     scrolls     = 0;
+        cv::Mat image;
+    };
+
     struct Subframe {
         cv::Rect           rect;             // union of its states' boxes
         int                in_place_changes = 0;
         std::vector<State> states;           // settled appearances, in order
+        std::vector<InnerDoc> inner;         // runs it scrolled through, stitched
         [[nodiscard]] bool is_screenflow() const {
             return static_cast<int>(states.size()) >= SUBFRAME_MIN_STATES;
         }

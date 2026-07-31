@@ -55,9 +55,20 @@ void SubframeTracker::observe(long frame, const cv::Mat& prev_gray, const cv::Ma
         // subframe change at all: something changed, and not the whole viewport.
         if (changed_px >= SUBFRAME_MIN_CHANGED_PX
             && changed_px <= SUBFRAME_MAX_AREA_FRAC * frame_area) {
+            // Open to kill speckle, then CLOSE generously. Closing matters as much
+            // as the components do: a region that SCROLLS its own content changes
+            // only the boundaries between its rows, so its changed mask is a set of
+            // thin strips of a few thousand pixels each — every one of them below
+            // the floor, and the region goes undetected entirely (measured on the
+            // inner-scroll fixture: 451 frames of a panel scrolling 2286px, zero
+            // regions found). Closing merges strips that belong to one region while
+            // leaving two regions a screen apart separate.
             cv::Mat opened;
             cv::morphologyEx(changed, opened, cv::MORPH_OPEN,
                              cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
+            cv::morphologyEx(opened, opened, cv::MORPH_CLOSE,
+                             cv::getStructuringElement(cv::MORPH_RECT,
+                                                       cv::Size(SUBFRAME_CLOSE_PX, SUBFRAME_CLOSE_PX)));
             cv::Mat labels, stats, centroids;
             const int n = cv::connectedComponentsWithStats(opened, labels, stats, centroids, 8);
             for (int k = 1; k < n; ++k) {

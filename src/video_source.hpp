@@ -13,11 +13,14 @@ public:
         double  t     = 0.0; // seconds since video start (index / fps)
     };
 
-    explicit VideoSource(const std::string& path);
+    // `roi` restricts every frame to a rectangle of it. That is what makes the
+    // pipeline recursive: a subframe is not a special case downstream, it is the
+    // same pipeline reading a smaller frame. An empty rect means the whole frame.
+    explicit VideoSource(const std::string& path, const cv::Rect& roi = cv::Rect());
 
     [[nodiscard]] bool   ok() const     { return cap_.isOpened(); }
-    [[nodiscard]] int    width() const  { return width_; }
-    [[nodiscard]] int    height() const { return height_; }
+    [[nodiscard]] int    width() const  { return roi_.width  ? roi_.width  : width_; }
+    [[nodiscard]] int    height() const { return roi_.height ? roi_.height : height_; }
     [[nodiscard]] double fps() const    { return fps_; }
 
     // Reads the next frame; returns false at end of stream.
@@ -34,4 +37,5 @@ private:
     int    height_     = 0;
     double fps_        = 0.0;
     long   next_index_ = 0;
+    cv::Rect roi_;
 };

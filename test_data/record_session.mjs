@@ -49,7 +49,7 @@ const planIdx = argv.indexOf('--plan');
 if (planIdx >= 0) { PLAN_NAME = argv[planIdx + 1]; argv.splice(planIdx, 2); }
 const PLANS = ['single', 'multipage', 'revisit', 'hostile',
                'noscroll', 'revisit_noscroll', 'cookie', 'jumps', 'fling',
-               'manyjumps', 'gallery', 'gallery_video'];
+               'manyjumps', 'gallery', 'gallery_video', 'gallery_scroll'];
 if (!PLANS.includes(PLAN_NAME)) {
   console.error(`unknown plan: ${PLAN_NAME} (use ${PLANS.join('|')})`);
   process.exit(1);
@@ -62,15 +62,17 @@ const DEFAULT_OUT  = { single: 'session_page1', multipage: 'session_multipage',
                        fling: 'session_fling',
                        manyjumps: 'session_manyjumps',
                        gallery: 'session_gallery',
-                       gallery_video: 'session_gallery_video' };
+                       gallery_video: 'session_gallery_video',
+                       gallery_scroll: 'session_gallery_scroll' };
 const DEFAULT_PAGE = { hostile: 'scroll_page_hostile.html',
                        cookie:  'scroll_page_cookie.html',
                        gallery: 'scroll_page_gallery.html',
-                       gallery_video: 'scroll_page_gallery.html' };
+                       gallery_video: 'scroll_page_gallery.html',
+                       gallery_scroll: 'scroll_page_gallery.html' };
 // Fragment appended to the page URL. scroll_page_gallery.html reads #video and
 // turns its panel from tap-driven states into continuous churn, so the two plans
 // differ on exactly one axis.
-const FRAGMENT = { gallery_video: '#video' };
+const FRAGMENT = { gallery_video: '#video', gallery_scroll: '#innerscroll' };
 const PAGE_FILE = resolve(argv[0] || join(HERE, DEFAULT_PAGE[PLAN_NAME] || 'scroll_page.html'));
 const OUT_DIR   = resolve(argv[1] || join(HERE, DEFAULT_OUT[PLAN_NAME]));
 const FRAMES_DIR = join(OUT_DIR, 'frames');
@@ -243,6 +245,21 @@ const GALLERY_PLAN = [
 // the host document fractured into 3 pages instead of 1, for that reason and not
 // for anything to do with the subframe decision. Keeping the plan still isolates
 // the axis under test — the same region, tapped or playing.
+// The subframe's own content is scrolled, twice down and once back up, while the
+// page never moves. Required outcome: the DOCUMENT is one viewport tall (nothing
+// about the page scrolled), and the subframe is reported with a stitch as tall as
+// the content that passed through it.
+const INNER_SEL = process.argv.includes('--plan') && PLAN_NAME === 'gallery_scroll'
+                  ? '#panel-scroll' : null;
+const GALLERY_SCROLL_PLAN = [
+  { pause: 10 },
+  { toEl: '#panel', at: 150 },        // bring the panel into view (page scrolls once)
+  { pause: 12 },
+  { scrollEl: '#panel-scroll', to: 0.55 }, { pause: 14 },
+  { scrollEl: '#panel-scroll', to: 1.00 }, { pause: 14 },
+  { scrollEl: '#panel-scroll', to: 0.20 }, { pause: 12 },
+];
+
 const GALLERY_VIDEO_PLAN = [
   { pause: 10 },
   { toEl: '#panel', at: 150 },     // scroll it into view while it is still
@@ -459,6 +476,8 @@ async function runSingle(plan) {
     fixed: gt.fixed,
     regions: gt.regions,
     dynamicRegions: gt.dynamicRegions || [],
+    // Geometry of a subframe whose own content scrolls, when the fixture has one.
+    ...(gt.innerScroll ? { innerScroll: gt.innerScroll } : {}),
     frames,
   };
   writeFileSync(join(OUT_DIR, 'ground_truth.json'), JSON.stringify(meta, null, 2));
@@ -544,7 +563,33 @@ async function runSession(plan) {
 
   for (const step of plan) {
     if (step.pause) {
-      for (let i = 0; i < step.pause; i++) await capture({ page: pageIdx, scrollY: curY });
+      const inner = INNER_SEL
+        ? await evaluate(`Math.round(document.querySelector(${JSON.stringify(INNER_SEL)}).scrollTop)`)
+        : undefined;
+      for (let i = 0; i < step.pause; i++)
+        await capture({ page: pageIdx, scrollY: curY,
+                        ...(inner === undefined ? {} : { innerScrollTop: inner }) });
+      continue;
+    }
+    if (step.scrollEl !== undefined) {
+      // Scroll a SUBFRAME's own content. The page does not move, so nothing about
+      // this belongs to the document's offset — which is the whole point of the
+      // fixture. Ground truth is the element's scrollTop per frame.
+      const sel = step.scrollEl;
+      const cur = await evaluate(`document.querySelector(${JSON.stringify(sel)}).scrollTop`);
+      const max = await evaluate(
+        `(() => { const e = document.querySelector(${JSON.stringify(sel)});
+                  return e.scrollHeight - e.clientHeight; })()`);
+      const target = Math.round(Math.min(max, Math.max(0, step.to * max)));
+      const steps = Math.max(2, Math.round(Math.abs(target - cur) / AVG_STEP));
+      for (let i = 1; i <= steps; i++) {
+        const y = Math.round(cur + (target - cur) * easeInOut(i / steps));
+        const at = await evaluate(
+          `(() => { const e = document.querySelector(${JSON.stringify(sel)});
+                    e.scrollTop = ${y}; return Math.round(e.scrollTop); })()`);
+        await sleep(SETTLE_MS);
+        await capture({ page: pageIdx, scrollY: curY, innerScrollTop: at });
+      }
       continue;
     }
     if (step.to !== undefined) {
@@ -632,6 +677,8 @@ async function runSession(plan) {
     // reads this at the top level, so it has to travel with the session, not
     // only with the page.
     dynamicRegions: gt.dynamicRegions || [],
+    // Geometry of a subframe whose own content scrolls, when the fixture has one.
+    ...(gt.innerScroll ? { innerScroll: gt.innerScroll } : {}),
     pages,
     visits,
     events,
@@ -663,6 +710,7 @@ try {
   else if (PLAN_NAME === 'cookie')           await runSession(COOKIE_PLAN);
   else if (PLAN_NAME === 'gallery')          await runSession(GALLERY_PLAN);
   else if (PLAN_NAME === 'gallery_video')    await runSession(GALLERY_VIDEO_PLAN);
+  else if (PLAN_NAME === 'gallery_scroll')   await runSession(GALLERY_SCROLL_PLAN);
   else if (PLAN_NAME === 'noscroll')         await runSingle(NOSCROLL_PLAN);
   else if (PLAN_NAME === 'jumps')            await runSingle(JUMPS_PLAN);
   else if (PLAN_NAME === 'fling')            await runSingle(FLING_PLAN);
