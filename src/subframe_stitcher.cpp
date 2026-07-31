@@ -13,6 +13,16 @@ SubframeStitcher::run(const cv::Rect& roi, long first_frame, long last_frame, in
 {
     std::vector<Doc> docs;
     if (roi.width < BLOCK_SIZE || roi.height < BLOCK_SIZE) return docs;
+    // Belt and braces: everything below is sized from this rect, and a rect that
+    // reaches past the frame would be silently clipped by the reader instead,
+    // leaving the masks a different size from the frames.
+    cv::Rect box = roi;
+    {
+        VideoSource probe(video_path_);
+        if (!probe.ok()) return docs;
+        box &= cv::Rect(0, 0, probe.width(), probe.height());
+        if (box.width < BLOCK_SIZE || box.height < BLOCK_SIZE) return docs;
+    }
 
     // ── Pass 1: classify the subframe's own transitions ──────────────────────
     // The same classifier, reading a smaller frame. No chrome or noise mask is
@@ -21,7 +31,7 @@ SubframeStitcher::run(const cv::Rect& roi, long first_frame, long last_frame, in
     // any. The scroll veto is maskless by design anyway.
     std::vector<TransitionType> kinds;   // one per transition, index = frame - first - 1
     {
-        VideoSource video(video_path_, roi);
+        VideoSource video(video_path_, box);
         if (!video.ok()) return docs;
         if (!video.skip_to(first_frame)) return docs;
         TransitionClassifier classifier(Sensitivity::Normal);
@@ -61,9 +71,9 @@ SubframeStitcher::run(const cv::Rect& roi, long first_frame, long last_frame, in
     for (const Run& r : runs) {
         if (r.scrolls < SUBFRAME_MIN_INNER_SCROLLS) continue;
         if (r.last - r.first + 1 < 2) continue;
-        PageStitcher stitcher(video_path_, roi.width, roi.height, fps_,
+        PageStitcher stitcher(video_path_, box.width, box.height, fps_,
                               false /* verbose: its page-level lines would mislead */,
-                              subframe_id, nullptr, roi);
+                              subframe_id, nullptr, box);
         PageVisit visit;
         visit.firstFrame = r.first;
         visit.lastFrame  = r.last;
@@ -79,8 +89,8 @@ SubframeStitcher::run(const cv::Rect& roi, long first_frame, long last_frame, in
             std::cout << "[subframe " << subframe_id << " inner] frames ["
                       << r.first << ".." << r.last << "]  " << r.scrolls
                       << " inner scrolls  → " << d.image.cols << "×" << d.image.rows
-                      << "px of inner document (subframe is " << roi.width << "×"
-                      << roi.height << ")\n";
+                      << "px of inner document (subframe is " << box.width << "×"
+                      << box.height << ")\n";
         docs.push_back(std::move(d));
     }
     return docs;

@@ -1470,6 +1470,34 @@ the pages claimed but never had: **7255px → 1134px**, and the page whose outpu
 started this is now nine pages of exactly one viewport each, with the repeated
 furniture gone and one coherent screen on each.
 
+### A crash the corpus caught, and how it got in — 2026-07-31
+
+Two of the richest desktop recordings died mid-stitch with an OpenCV assertion:
+`setTo` with a mask whose size no longer matched. They had run clean before the
+subframe work and were still crashing after it, which is the useful part of the
+story: **the suite never saw it, because the 19 sessions it scores do not include
+them.** The corpus that found it is the informal one — 28 recordings from four
+studies, run by hand.
+
+The cause is a detail of how a subframe's rectangle is derived. `SubframeTracker`
+takes the MEDIAN of its changes' x, y, width and height — independently, so that
+one odd repaint cannot stretch the region — and nothing in that construction keeps
+`x + width` inside the frame. A rect that reaches past the edge is harmless
+everywhere it is only compared or clipped (the confinement test and the state crops
+both clip), but the recursion SIZES a stitcher to it while `VideoSource` clips what
+it reads to the frame. Masks of one size, frames of another, and the first masked
+operation aborts.
+
+Fixed at the source — the median rect is clipped to the frame, because a reported
+rectangle is a claim about the frame and must be one — and again where it is used,
+since a stitcher sized from a rect should agree with the reader about what that rect
+is. Both recordings now complete (one in 172s, nine pages) and all 19 suite sessions
+stay at their established numbers.
+
+Worth writing down: a stack trace found this in one attempt after two rounds of
+reading code found nothing. `gdb -batch -ex run -ex bt` on the failing recording
+named the function, the caller and the operation.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

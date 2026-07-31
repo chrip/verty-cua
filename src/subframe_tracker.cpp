@@ -139,11 +139,18 @@ void SubframeTracker::finish()
     //    group grew to 1800×956 of a 1918×956 frame).
     struct Group { std::vector<cv::Rect> boxes; cv::Rect median; };
     std::vector<Group> groups;
-    auto remedian = [](Group& g) {
+    auto remedian = [this](Group& g) {
         std::vector<int> xs, ys, ws, hs;
         for (const cv::Rect& b : g.boxes) { xs.push_back(b.x); ys.push_back(b.y);
                                             ws.push_back(b.width); hs.push_back(b.height); }
-        g.median = cv::Rect(median_of(xs), median_of(ys), median_of(ws), median_of(hs));
+        // Clipped to the frame: the medians of x, y, w and h are taken
+        // independently, so nothing stops their combination from running past the
+        // edge — and a rect that does is not just untidy, it crashes the recursion,
+        // which sizes a stitcher to the rect while the video clips what it reads to
+        // the frame (measured: two of the richest desktop recordings died in
+        // TransitionClassifier::classify on a mask whose size no longer matched).
+        g.median = cv::Rect(median_of(xs), median_of(ys), median_of(ws), median_of(hs))
+                   & cv::Rect(0, 0, frame_w_, frame_h_);
     };
     for (const auto& [b, frame] : change_boxes_) {
         (void)frame;
