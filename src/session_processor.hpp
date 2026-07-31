@@ -36,6 +36,15 @@ public:
     // section under it are two — and one region can appear under several pages.
     struct PageSubframe {
         cv::Rect                              rect;
+        // The document row `rect.y` sits at on THIS page, or -1 for none. The rect
+        // is in viewport coordinates and the page canvas is in document
+        // coordinates, so without this a consumer cannot lay a state image back
+        // over the stitch without joining frames[] on a state's frame number — and
+        // for a region with no states there is no frame to join on. Derived in
+        // run(); -1 when the region's evidence frames do not agree on one offset
+        // (a viewport-fixed sticky element sits at every document row and none) or
+        // when this page localized none of them.
+        long                                  document_y = -1;
         bool                                  screenflow = false;
         int                                   in_place_changes = 0;
         std::vector<SubframeTracker::State>   states;

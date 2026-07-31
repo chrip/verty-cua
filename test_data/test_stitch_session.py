@@ -344,22 +344,33 @@ def subframe_over(report, box):
     return best
 
 
-def score_stamps(report):
-    """Does each page image really show the subframe state the report claims?
+def score_stamps(report, gt=None):
+    """Does each page image show the state the report claims, at the row it claims?
 
-    Needs no ground truth: it holds the report to its own statement. A page cannot
-    show a screen flow in all of its states, so it shows one and names it in
-    `stampedState`; this reads that state's PNG back and compares it against the
-    page's own stitch at the document row the state was seen at (the rect is in
-    viewport coordinates, `frames[]` gives that frame's `vt`). The failure this
-    guards against is silent: a stamp painted at the viewport row instead of the
-    document row lands hundreds of pixels off in a scrolled page and still produces
-    a plausible-looking screenshot.
+    Two checks, and the second is the one that matters.
 
-    Returns None when no page stamped anything.
+    PLACEMENT reads the state's PNG back and puts it where a CONSUMER would put it:
+    x from the subframe's rect, y from the state's own documentY, size from the
+    subframe's rect. It must match the page's stitch exactly, over the whole
+    rectangle. Partial overlap is a failure, not a smaller sample — production
+    clips a stamp to the canvas exactly as a naive comparison would, so scoring
+    only the overlapping rows made a region 252px off the bottom of its own page
+    match perfectly on the 3 rows that remained.
+
+    INDEPENDENCE compares documentY - rect.y against the RECORDER's scrollY for
+    that frame. Without it the check is a mirror of the code it polices: the
+    report's frames[].vt, the stamp's paint offset and any recomputation from them
+    all come out of one vt array, so a wrong offset would agree with itself. The
+    ground truth is the only number in the suite that does not.
+
+    Returns None when the report claims no stamp anywhere.
     """
-    frames = {f["frame"]: f for f in (report.get("frames") or []) if "frame" in f}
-    worst, n = 0.0, 0
+    gt_scroll = {}
+    if gt:
+        for f in gt.get("frames", []):
+            if "index" in f and f.get("scrollY") is not None:
+                gt_scroll[int(f["index"])] = int(f["scrollY"])
+    worst, n, worst_vt, checked_vt, notes = 0.0, 0, 0, 0, []
     for page in report.get("pages", []):
         stitch = page.get("stitch")
         img = cv2.imread(stitch) if stitch and os.path.exists(stitch) else None
@@ -375,20 +386,48 @@ def score_stamps(report):
             state = cv2.imread(st["image"])
             if state is None:
                 continue
-            vt = int((frames.get(st["frame"], {}) or {}).get("vt") or 0)
-            y, x = sf["rect"]["y"] + vt, sf["rect"]["x"]
-            h = min(state.shape[0], img.shape[0] - y)
-            w = min(state.shape[1], img.shape[1] - x)
-            if h <= 0 or w <= 0:
-                worst, n = 255.0, n + 1      # stamped outside its own page
-                continue
-            mad = float(np.abs(img[y:y + h, x:x + w].astype(np.int16)
-                               - state[:h, :w].astype(np.int16)).mean())
-            worst = max(worst, mad)
             n += 1
+            r = sf["rect"]
+            # The state image must BE the subframe's rectangle — that is the whole
+            # basis on which a consumer sizes the slot it draws into.
+            if (state.shape[0], state.shape[1]) != (r["h"], r["w"]):
+                worst = 255.0
+                notes.append(f"state image {state.shape[1]}x{state.shape[0]} != rect {r['w']}x{r['h']}")
+                continue
+            y = st.get("documentY")
+            if y is None:
+                worst = 255.0
+                notes.append("stamped state carries no documentY")
+                continue
+            y, x = int(y), int(r["x"])
+            if y < 0 or x < 0 or y + r["h"] > img.shape[0] or x + r["w"] > img.shape[1]:
+                worst = 255.0
+                notes.append(f"documentY {y} puts the region outside its own page")
+                continue
+            worst = max(worst, float(np.abs(img[y:y + r["h"], x:x + r["w"]].astype(np.int16)
+                                            - state.astype(np.int16)).mean()))
+            gy = gt_scroll.get(int(st["frame"]))
+            if gy is not None:
+                checked_vt += 1
+                worst_vt = max(worst_vt, abs((y - r["y"]) - gy))
     if n == 0:
         return None
-    return {"stamps": n, "worstMAD": round(worst, 2), "pass": worst <= 1.0}
+    m = {"stamps": n, "worstMAD": round(worst, 2), "pass": worst <= 1.0}
+    if checked_vt:
+        m["offsetsVsRecorder"] = checked_vt
+        m["worstOffsetErrorPx"] = worst_vt
+        m["pass"] = m["pass"] and worst_vt <= STAMP_OFFSET_TOLERANCE_PX
+    if notes:
+        m["notes"] = notes[:4]
+    return m
+
+
+# A stamped state's documentY minus its viewport row is the scroll offset of one
+# frame, and the recorder wrote that number down. They are the same quantity, so
+# the tolerance is for accumulated dead-reckoning error only — measured 0px on
+# every stamp in the corpus, against the ~8px of drift the ghost check tolerates
+# over a whole page.
+STAMP_OFFSET_TOLERANCE_PX = 4
 
 
 # ── Multipage-session scoring ─────────────────────────────────────────────────
@@ -735,7 +774,7 @@ def main():
     # ── Score ──────────────────────────────────────────────────────────────────
     # Applies to every session, ground truth or not: the report is checked against
     # the images the same run wrote.
-    stamps = score_stamps(report)
+    stamps = score_stamps(report, gt)
     if realworld:
         checks, production = score_realworld(report, session)
         scroll, ghost, total_error = None, None, 0
@@ -838,9 +877,14 @@ def main():
               f"(tol {GHOST_TOLERANCE['badBlockFrac']*100:.0f}%)"
               f"    ghost: {'PASS' if ghost['pass'] else 'FAIL'}")
     if stamps is not None:
+        extra = (f"  offsetVsRecorder={stamps['worstOffsetErrorPx']}px over "
+                 f"{stamps['offsetsVsRecorder']} (tol {STAMP_OFFSET_TOLERANCE_PX})"
+                 if "worstOffsetErrorPx" in stamps else "  offsetVsRecorder=n/a (no ground truth)")
         print(f"\n  Stamped subframe states:  {stamps['stamps']} in the page images"
-              f"  worstMAD={stamps['worstMAD']} (tol 1.0)"
+              f"  worstMAD={stamps['worstMAD']} (tol 1.0){extra}"
               f"    stamps: {'PASS' if stamps['pass'] else 'FAIL'}")
+        for note in stamps.get("notes", []):
+            print(f"      ! {note}")
     print(f"\n  overall: {'PASS' if passed else 'FAIL'}   ({elapsed:.1f}s)")
 
     if prev is not None:

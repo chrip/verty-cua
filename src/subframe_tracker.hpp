@@ -39,6 +39,13 @@ public:
         int       dwell = 0;     // transitions it held still for
         cv::Rect  box;           // what changed to produce it
         cv::Mat   image;         // the SUBFRAME rect of `frame`, filled afterwards
+        // The document row `image`'s top edge belongs at, or -1 if this frame was
+        // never localized. Filled by the owner alongside `image`, and for the same
+        // reason: it depends on where the viewport was, which is a page's
+        // knowledge, not a region's. Per state rather than per region because two
+        // states of one region can be seen at different offsets — the region is
+        // still reported as one, and each state then places differently.
+        long      document_y = -1;
     };
 
     // An inner document of the subframe: a run of its own frames that it scrolled
@@ -53,7 +60,12 @@ public:
     };
 
     struct Subframe {
-        cv::Rect           rect;             // union of its states' boxes
+        // The region, in VIEWPORT coordinates: the component-wise median of the
+        // change boxes grouped into it (see the grouping in the .cpp), clipped to
+        // the frame. Not a union — a union grows to the largest repaint the region
+        // ever made, and every state image is cropped to THIS rectangle, so it has
+        // to be the rectangle the region occupies, not the biggest one it touched.
+        cv::Rect           rect;
         int                in_place_changes = 0;
         std::vector<long>  change_frames;    // when it changed (for per-page views)
         std::vector<State> states;           // settled appearances, in order

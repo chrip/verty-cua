@@ -327,6 +327,33 @@ bool SessionProcessor::run()
             if (frame < 0 || frame >= frame_count_) return -1;
             return frames_[static_cast<size_t>(frame)].pageId;
         };
+        // The one document offset every frame in `evidence` agrees on, or -1 if
+        // they do not agree or none of them carries an offset. Frames with no
+        // offset (a page-change window, a blank visit) are skipped rather than
+        // counted as disagreement: they make no claim to disagree with.
+        //
+        // Exact agreement, not a tolerance. The offset is published as the
+        // document row of a viewport rect, i.e. as the place to lay this region's
+        // images over the page stitch, and a row averaged out of offsets that
+        // differ is a guess. Measured offset spread over the evidence frames of all
+        // 16 reported page-slices in the corpus: exactly 0px on 14 of them — one of
+        // them a noise region whose evidence is 627 localized change frames —
+        // against 660px (rw1_newsportal's sticky right rail, 481×956 at the frame
+        // edge, changing over an offset range of 660) and 2999px (an in-content ad
+        // that reloaded at two offsets 3000px apart) for the two that must name no
+        // row at all. So exactness costs nothing measured, and the gap it sits in
+        // is three orders of magnitude wide — there is no tolerance to calibrate.
+        auto agreed_vt = [&](const std::vector<long>& evidence) -> long {
+            long v = -1;
+            for (long f : evidence) {
+                if (f < 0 || f >= frame_count_) continue;
+                const long u = frames_[static_cast<size_t>(f)].vt;
+                if (u < 0) continue;
+                if (v >= 0 && u != v) return -1;
+                v = u;
+            }
+            return v;
+        };
         for (const auto& sf : subframes_) {
             std::map<int, PageSubframe> per_page;
             auto slot = [&](int page) -> PageSubframe& {
@@ -366,6 +393,75 @@ bool SessionProcessor::run()
                     if (hi < 0 || v > hi) hi = v;
                 }
                 if (lo >= 0 && hi - lo > SUBFRAME_MAX_ANCHOR_DRIFT) continue;
+
+                // Where the region is in DOCUMENT coordinates on this page. Only
+                // rect.y needs it: rect.x, w and h are the same numbers in both
+                // spaces, because nothing in this tool models horizontal scrolling
+                // (ScrollEvent has only dy, frames[] only vt).
+                //
+                // A slice WITH states is evidenced by their frames, because the
+                // states are what the report hands over to be placed: each state
+                // image is a crop of `rect`, and the page canvas is stamped with one
+                // of them, so anchoring to the states makes the published row equal
+                // the row the stamp was painted at, by construction (verified: the
+                // stamping log below prints document row 709 for session_gallery,
+                // and 709 is what the report states). Measured on rw6_shopcatalog
+                // page 3, why the two evidence sets are not interchangeable: its
+                // states agree on 960 while its change frames span 958..960, so
+                // change frames would refuse a row that the state images have.
+                //
+                // A slice WITHOUT states — a region classified as dynamic noise —
+                // has no state frame at all, and its change frames are the only
+                // evidence there is. Measured: without this branch none of the six
+                // noise slices in the corpus can be placed, though four of them are
+                // ordinary in-flow elements (the `position: relative` panels of the
+                // gallery and hostile fixtures, a carousel in rw6_shopcatalog) that
+                // do sit at one document row — 711 for the gallery video panel,
+                // agreed by all 627 of its localized change frames.
+                //
+                // What agreement proves, and what it does not. It proves the
+                // document stood still across every frame this region is evidenced
+                // by, so the row is where the stitch wrote those pixels. It does NOT
+                // prove the region moves WITH the document: a viewport-fixed element
+                // that only churns while the page is still would agree too, and a
+                // single change frame agrees with itself. Asked of the pixels
+                // directly — compare the region's rect between two frames at
+                // different offsets, once unshifted and once shifted by the offset
+                // difference — the four in-flow noise regions above answer clearly
+                // (unshifted 69.7/83.0/93.6/119.1 MAD against shifted
+                // 39.8/35.2/35.6/0.7), so the branch is right where it is used. But
+                // the same question put to the screen flows does not separate: a
+                // product grid is periodic enough that rw6's page 6 prefers
+                // "viewport" (28.9 vs 37.5) for the region its page 0 shows in flow
+                // at 170:1, and an offset difference of 2px decides nothing. So the
+                // anchor is deliberately NOT reported as a verdict — this field
+                // states a row and what founds it, and nothing about CSS.
+                std::vector<long> evidence;
+                if (!ps.states.empty()) {
+                    for (const auto& st : ps.states) evidence.push_back(st.frame);
+                } else {
+                    for (long f : sf.change_frames)
+                        if (page_of(f) == p) evidence.push_back(f);
+                }
+                const long vt = agreed_vt(evidence);
+                if (vt >= 0) ps.document_y = ps.rect.y + vt;
+
+                // Each state also gets its OWN row, from its own frame. The
+                // region-level row above is a summary that exists only while every
+                // observation agrees; a state's row is a fact about one frame and
+                // exists whenever that frame was localized. Without the per-state
+                // row there is a band of regions — states spread by 1 to
+                // SUBFRAME_MAX_ANCHOR_DRIFT px, which passes the veto above — that
+                // is reported with no way to place any of its images, though every
+                // one of them has an exact place. (The comment on that constant
+                // cites a real 68px embedded-phone case, so the band is reachable;
+                // no session in the corpus is in it today.)
+                for (auto& st : ps.states) {
+                    if (st.frame < 0 || st.frame >= frame_count_) continue;
+                    const long v = frames_[static_cast<size_t>(st.frame)].vt;
+                    if (v >= 0) st.document_y = ps.rect.y + v;
+                }
+
                 pages_[static_cast<size_t>(p)].subframes.push_back(std::move(ps));
             }
         }

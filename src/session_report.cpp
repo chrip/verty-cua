@@ -68,7 +68,17 @@ bool SessionReport::write(const std::string& path,
     // so it shows one, and a consumer that lays out the states itself needs to know
     // which one is already there — otherwise it double-renders that state and has
     // no way to tell which pixels of the page it may replace.
-    out << "  \"schema\": 6,\n";
+    // schema 7 adds subframes[].documentY: the document row the region's viewport
+    // rect.y sits at on this page. Every other rectangle in a page entry is either
+    // already in document coordinates (the stitch) or is chrome that has no single
+    // document row; a subframe was the one thing reported in viewport coordinates
+    // that DOES have one, and the report made a consumer join frames[] on a state's
+    // frame number to find it. Measured in the corpus: one region at viewport
+    // y=622 is document row 742, 1582 and 622 on three different pages of
+    // rw6_shopcatalog, because the user had scrolled somewhere else each time — so
+    // the viewport rect alone is not enough to place anything, and a region
+    // classified as noise has no state, hence no frame, hence was unplaceable.
+    out << "  \"schema\": 7,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -159,6 +169,21 @@ bool SessionReport::write(const std::string& path,
             out << (k ? ",\n      " : "\n      ")
                 << "{\"rect\": {\"x\": " << sf.rect.x << ", \"y\": " << sf.rect.y
                 << ", \"w\": " << sf.rect.width << ", \"h\": " << sf.rect.height << "}, "
+                // Where rect.y is in the PAGE's document coordinates — the row to
+                // lay this region's images over the stitch at. x, w and h are the
+                // same in both spaces (no horizontal scrolling is modelled), so
+                // only y is restated. Not to be confused with the coordinates of
+                // innerDocuments[] below, which are the SUBFRAME's own document.
+                //
+                // null when the region does not sit at one document row: it was
+                // fixed in the viewport, so it sat at every row and none, or its
+                // rect drifted; and null when this page localized none of the
+                // frames the region is evidenced by (a page-change window or a
+                // blank visit carries no offset). In every null case the region's
+                // position on the page image is not merely unstated but unknown,
+                // and the states must not be laid over the stitch at all.
+                << "\"documentY\": "
+                << (sf.document_y >= 0 ? std::to_string(sf.document_y) : "null") << ", "
                 << "\"kind\": \"" << (sf.screenflow ? "screenflow" : "noise") << "\", "
                 << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
                 << "\"settledStates\": " << sf.states.size() << ", "
@@ -185,6 +210,16 @@ bool SessionReport::write(const std::string& path,
                     << ", \"image\": " << (have ? "\"" + escape((*dp)[m]) + "\"" : "null")
                     << "}";
             }
+            // A state's IMAGE covers the subframe's `rect` (above) — not the
+            // rectangle below it. `changedRect` is what changed to produce this
+            // state, which is smaller and moves about: one tap repaints a whole
+            // panel and the next only its body. It was named `rect` up to schema 6,
+            // beside `image`, and that was a trap — measured across the corpus, all
+            // 58 states of the sessions that have any reported a `rect` that is not
+            // the rectangle their own PNG covers, rw7's worst by 365px and a factor
+            // of 11 in area (330x46 claimed, 361x507 shipped). To place a state:
+            // x and w from the subframe's rect, h from it too, y from this state's
+            // documentY.
             out << "], \"states\": [";
             for (size_t m = 0; m < sf.states.size(); ++m) {
                 const auto& st = sf.states[m];
@@ -193,7 +228,9 @@ bool SessionReport::write(const std::string& path,
                     << "{\"frame\": " << st.frame
                     << ", \"t\": " << std::format("{:.3f}", st.t)
                     << ", \"heldFrames\": " << st.dwell
-                    << ", \"rect\": {\"x\": " << st.box.x << ", \"y\": " << st.box.y
+                    << ", \"documentY\": "
+                    << (st.document_y >= 0 ? std::to_string(st.document_y) : "null")
+                    << ", \"changedRect\": {\"x\": " << st.box.x << ", \"y\": " << st.box.y
                     << ", \"w\": " << st.box.width << ", \"h\": " << st.box.height << "}"
                     << ", \"image\": " << (have ? "\"" + escape((*sp)[m]) + "\"" : "null")
                     << "}";

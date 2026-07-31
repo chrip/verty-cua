@@ -131,7 +131,7 @@ This produces `./build/verty`.
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON, `"schema": 6`). Per page: the stitch
+- `-r` — optional **session report** (JSON, `"schema": 7`). Per page: the stitch
   file, `capturedExtent` (how much document the frames actually covered),
   `documentHeight` (the document's real height where the scrollbar could be read,
   with its own uncertainty — `null` when unknowable), `reachedBottom`
@@ -143,10 +143,26 @@ This produces `./build/verty`.
   `frames[]` — one row per frame with `{pageId, vt}` or `null` plus the reason
   there is no answer.
 
+  **Two coordinate systems, and which fields are in which.** The stitch is a
+  DOCUMENT canvas: its rows are document rows, `capturedExtent` tall. Everything
+  measured off a video frame — `fixedRects`, `overlays`, a subframe's `rect` — is in
+  VIEWPORT coordinates, where row 0 is the top of the frame, not of the document. The
+  two coincide only at scroll offset 0. `x`, `w` and `h` never differ between them
+  (nothing here models horizontal scrolling); only `y` does. So a viewport `y` plus
+  the offset `vt` of the frame it was measured on gives the document row — and where
+  the report hands you an image to place, it now states that row outright rather than
+  making you join `frames[]` to find it. Note also that the stitch *re-anchors* what
+  it stamps: a bottom-pinned overlay and the footer band are painted at
+  `capturedExtent - (viewportHeight - y)`, and a fixed sidebar spans the whole
+  document, so their viewport rectangles are not where they ended up either.
+
   Each page also carries `subframes[]`: every region that changed while the
-  document did not, with its rectangle in frame coordinates, how many times it
+  document did not, with its rectangle in viewport coordinates, `documentY` (the
+  document row that rectangle sits at on this page — `null` when the region's
+  evidence frames disagree on one offset, as a viewport-fixed sticky element's do,
+  or when none of them was localized), how many times it
   changed on that page, and its `kind`. A `screenflow` lists its settled `states` — frame,
-  timestamp, how long it was held, and the image file each was written to
+  timestamp, how long it was held, its own `documentY`, and the image file each was written to
   (`<out>_page000_sub000_state000.png`, …); a `noise` region lists none, because a
   playing video has no state worth keeping. Where a screen flow **scrolled its own
   content**, it also lists `innerDocuments`: the pipeline runs again on that
@@ -163,6 +179,16 @@ This produces `./build/verty`.
   screens and no majority, adjacent rows elect different ones and the region
   renders as a superposition. A consumer laying the states out itself knows from
   `stampedState` which one is already on the page.
+
+  **To place a state over the page stitch**, take `x`, `w` and `h` from the
+  subframe's `rect` and `y` from that state's `documentY` — a state's image is a crop
+  of the subframe's rectangle, nothing else. It is emphatically *not* `changedRect`,
+  which is what changed to produce the state (one tap repaints a whole panel, the
+  next only its body): measured across the corpus, all 58 states of the sessions that
+  have any report a `changedRect` that differs from the rectangle their own PNG
+  covers, by up to 365px and a factor of 11 in area. That field was called `rect` up
+  to schema 6, sitting next to `image`, which made it a trap; it is renamed for
+  exactly that reason.
 
   The distinction between `capturedExtent` and `documentHeight` is the point.
   Only the first is derivable from the frames; a session that stopped early
