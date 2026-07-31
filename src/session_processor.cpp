@@ -1,6 +1,8 @@
 #include "session_processor.hpp"
 #include "subframe_stitcher.hpp"
+#include <algorithm>
 #include <iostream>
+#include <map>
 
 SessionProcessor::SessionProcessor(std::string video_path, bool verbose,
                                    Sensitivity sensitivity)
@@ -293,6 +295,50 @@ bool SessionProcessor::run()
                 subframes_[i].inner.push_back(std::move(id));
             }
         }
+
+        // ── Attribute each region to the page(s) it happened on ──────────────
+        // Detection is session-wide, because a region is one region whether or
+        // not the session navigated while it was there. Reporting is per page,
+        // because that is where a consumer looks for it — and it is what lets the
+        // written files carry their page in their name.
+        auto page_of = [&](long frame) {
+            if (frame < 0 || frame >= frame_count_) return -1;
+            return frames_[static_cast<size_t>(frame)].pageId;
+        };
+        for (const auto& sf : subframes_) {
+            std::map<int, PageSubframe> per_page;
+            auto slot = [&](int page) -> PageSubframe& {
+                auto it = per_page.find(page);
+                if (it == per_page.end()) {
+                    PageSubframe ps;
+                    ps.rect       = sf.rect;
+                    ps.screenflow = sf.is_screenflow();
+                    it = per_page.emplace(page, std::move(ps)).first;
+                }
+                return it->second;
+            };
+            for (long f : sf.change_frames) {
+                const int p = page_of(f);
+                if (p >= 0) ++slot(p).in_place_changes;
+            }
+            for (const auto& st : sf.states) {
+                const int p = page_of(st.frame);
+                if (p >= 0) slot(p).states.push_back(st);
+            }
+            for (const auto& d : sf.inner) {
+                const int p = page_of(d.first_frame);
+                if (p >= 0) slot(p).inner.push_back(d);
+            }
+            for (auto& [p, ps] : per_page)
+                if (p >= 0 && static_cast<size_t>(p) < pages_.size())
+                    pages_[static_cast<size_t>(p)].subframes.push_back(std::move(ps));
+        }
+        for (PageResult& pg : pages_)
+            std::sort(pg.subframes.begin(), pg.subframes.end(),
+                      [](const PageSubframe& a, const PageSubframe& b) {
+                          if (a.rect.y != b.rect.y) return a.rect.y < b.rect.y;
+                          return a.rect.x < b.rect.x;
+                      });
     }
 
     return !pages_.empty();

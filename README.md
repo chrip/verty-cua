@@ -109,13 +109,29 @@ This produces `./build/verty`.
 ./build/verty path/to/video.mp4 -o page.png -r report.json -v
 ```
 
-- `-o` — the stitched full-page PNG (page N of a multi-page session gets a
-  `_pageN` suffix).
+- `-o` — the stitched full-page PNG. A multi-page session writes one file per
+  page, and everything belonging to a page carries its number, zero-padded and
+  page-first, so that a file browser sorting by name shows a page followed by its
+  own subframes:
+
+  ```
+  out_page000.png                        the page
+  out_page000_sub000_doc000.png          a subframe of it, stitched (it scrolled)
+  out_page000_sub000_state000.png        a settled state of that subframe
+  out_page000_sub000_state001.png
+  out_page001.png                        the next page
+  out_page001_sub000_state000.png
+  ```
+
+  A page can hold several subframes (`sub000`, `sub001`, …) — an ajax gallery and
+  a scrollable comment section below it are two — and a region that survives a
+  navigation appears under each page it was on, with that page's share of its
+  states.
 - `-S` — sensitivity `normal|high` (default normal): `normal` starts a new
   page only on a real navigation; `high` starts a new stitched screenshot on
   every bigger DOM mutation (e.g. a closing cookie banner) and never merges
   revisits.
-- `-r` — optional **session report** (JSON, `"schema": 4`). Per page: the stitch
+- `-r` — optional **session report** (JSON, `"schema": 5`). Per page: the stitch
   file, `capturedExtent` (how much document the frames actually covered),
   `documentHeight` (the document's real height where the scrollbar could be read,
   with its own uncertainty — `null` when unknowable), `reachedBottom`
@@ -127,9 +143,9 @@ This produces `./build/verty`.
   `frames[]` — one row per frame with `{pageId, vt}` or `null` plus the reason
   there is no answer.
 
-  Per session it also carries `subframes[]`: each region that changed while the
+  Each page also carries `subframes[]`: every region that changed while the
   document did not, with its rectangle in frame coordinates, how many times it
-  changed, and its `kind`. A `screenflow` lists its settled `states` — frame,
+  changed on that page, and its `kind`. A `screenflow` lists its settled `states` — frame,
   timestamp, how long it was held, and the image file each was written to
   (`<out>_sub0_state00.png`, …); a `noise` region lists none, because a playing
   video has no state worth keeping. Where a screen flow **scrolled its own

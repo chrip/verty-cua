@@ -57,31 +57,44 @@ static Args parse_args(int argc, char* argv[]) {
 }
 
 // output.png → output_page2.png (single-page sessions keep the name verbatim).
+// ── Output names ──────────────────────────────────────────────────────────────
+// out.png → out_page000.png, and everything belonging to that page carries its
+// number: out_page000_sub000_state000.png. Zero-padded and page-first so that a
+// file browser sorting by name puts a page and its subframes together, in order,
+// which is how a person actually looks at them. Padding to three digits because
+// two is not enough for a long session (one real recording produced eleven pages,
+// and a page can hold several subframes with dozens of states each).
+static std::string page_token(size_t page)
+{
+    std::ostringstream t;
+    t << "_page" << std::setfill('0') << std::setw(3) << page;
+    return t.str();
+}
+
 static std::string page_output_path(const std::string& base, size_t page, size_t page_count) {
     if (page_count <= 1) return base;
     fs::path p(base);
     fs::path named = p.parent_path() /
-        (p.stem().string() + "_page" + std::to_string(page) + p.extension().string());
+        (p.stem().string() + page_token(page) + p.extension().string());
     return named.string();
 }
 
-// out.png → out_sub0_state00.png / out_sub0_doc00.png. Numbered, not named,
+// One image belonging to a page: a settled STATE of a subframe, or an inner
+// DOCUMENT it scrolled through (taller than the subframe). Numbered, not named,
 // because neither has a name the pixels can supply — the identity of each is its
-// position in the sequence. `state` is one settled appearance; `doc` is an inner
-// document the subframe scrolled through, so it is taller than the subframe.
-std::string subframe_output_path(const std::string& base, size_t sub, size_t n,
-                                 const char* what = "state")
+// position in the sequence.
+std::string subframe_output_path(const std::string& base, size_t page, size_t sub,
+                                 size_t n, const char* what)
 {
     fs::path p(base);
-    const std::string stem = p.stem().string();
-    const std::string ext  = p.extension().empty() ? ".png" : p.extension().string();
+    const std::string ext = p.extension().empty() ? ".png" : p.extension().string();
     std::ostringstream name;
-    name << stem << "_sub" << sub << "_" << what
-         << std::setfill('0') << std::setw(2) << n << ext;
+    name << p.stem().string() << page_token(page)
+         << "_sub" << std::setfill('0') << std::setw(3) << sub
+         << "_" << what << std::setfill('0') << std::setw(3) << n << ext;
     return (p.parent_path() / name.str()).string();
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[])
 {
     Args args = parse_args(argc, argv);
@@ -114,39 +127,43 @@ int main(int argc, char* argv[])
     // rectangle, so there is no single image that shows them all, and a consumer
     // that wants to lay them back over the page has their frame position in the
     // report.
-    std::vector<std::vector<std::string>> subframe_state_paths, subframe_doc_paths;
-    for (size_t i = 0; i < session.subframes().size(); ++i) {
-        const auto& sf = session.subframes()[i];
-        subframe_state_paths.emplace_back();
-        subframe_doc_paths.emplace_back();
-        if (!sf.is_screenflow()) continue;
-        for (size_t k = 0; k < sf.inner.size(); ++k) {
-            const std::string p = subframe_output_path(args.output, i, k, "doc");
-            if (sf.inner[k].image.empty() || !cv::imwrite(p, sf.inner[k].image)) {
-                std::cerr << "[main] failed to write: " << p << "\n";
-                return 1;
+    std::vector<std::vector<std::vector<std::string>>> state_paths, doc_paths;
+    for (size_t pi = 0; pi < pages.size(); ++pi) {
+        state_paths.emplace_back();
+        doc_paths.emplace_back();
+        for (size_t si = 0; si < pages[pi].subframes.size(); ++si) {
+            const auto& sf = pages[pi].subframes[si];
+            state_paths.back().emplace_back();
+            doc_paths.back().emplace_back();
+            if (!sf.screenflow) continue;   // noise keeps nothing
+            for (size_t k = 0; k < sf.inner.size(); ++k) {
+                const std::string p = subframe_output_path(args.output, pi, si, k, "doc");
+                if (sf.inner[k].image.empty() || !cv::imwrite(p, sf.inner[k].image)) {
+                    std::cerr << "[main] failed to write: " << p << "\n";
+                    return 1;
+                }
+                doc_paths.back().back().push_back(p);
             }
-            subframe_doc_paths.back().push_back(p);
-            std::cout << "[main] subframe " << i << " inner document " << k << ": "
-                      << fs::absolute(p) << "  (" << sf.inner[k].image.cols << "×"
-                      << sf.inner[k].image.rows << "px)\n";
-        }
-        for (size_t k = 0; k < sf.states.size(); ++k) {
-            const std::string p = subframe_output_path(args.output, i, k);
-            if (sf.states[k].image.empty() || !cv::imwrite(p, sf.states[k].image)) {
-                std::cerr << "[main] failed to write: " << p << "\n";
-                return 1;
+            for (size_t k = 0; k < sf.states.size(); ++k) {
+                const std::string p = subframe_output_path(args.output, pi, si, k, "state");
+                if (sf.states[k].image.empty() || !cv::imwrite(p, sf.states[k].image)) {
+                    std::cerr << "[main] failed to write: " << p << "\n";
+                    return 1;
+                }
+                state_paths.back().back().push_back(p);
             }
-            subframe_state_paths.back().push_back(p);
+            std::cout << "[main] page " << pi << " subframe " << si << ": "
+                      << sf.states.size() << " states, " << sf.inner.size()
+                      << " inner documents → "
+                      << fs::absolute(subframe_output_path(args.output, pi, si, 0,
+                                                           sf.inner.empty() ? "state" : "doc"))
+                      << " …\n";
         }
-        std::cout << "[main] subframe " << i << ": " << sf.states.size()
-                  << " states → " << fs::absolute(subframe_output_path(args.output, i, 0))
-                  << " …\n";
     }
 
     if (!args.report.empty()) {
         if (!SessionReport::write(args.report, args.input, session, stitch_paths,
-                                  subframe_state_paths, subframe_doc_paths)) {
+                                  state_paths, doc_paths)) {
             std::cerr << "[main] failed to write report: " << args.report << "\n";
             return 1;
         }

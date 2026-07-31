@@ -28,6 +28,20 @@ public:
     [[nodiscard]] bool run();
 
     // One reconstructed DISTINCT page (valid after run()).
+    // A subframe as it belongs to ONE page: the region and its verdict are
+    // properties of the region (decided on all the evidence in the session,
+    // because a region that outlives a navigation is one region), while the
+    // states, the inner documents and the change count are this page's share of
+    // it. A page can hold several — an ajax gallery and a scrollable comment
+    // section under it are two — and one region can appear under several pages.
+    struct PageSubframe {
+        cv::Rect                              rect;
+        bool                                  screenflow = false;
+        int                                   in_place_changes = 0;
+        std::vector<SubframeTracker::State>   states;
+        std::vector<SubframeTracker::InnerDoc> inner;
+    };
+
     struct PageResult {
         cv::Mat image;
         long    capturedExtent = 0;   // deepest observed offset + one viewport
@@ -40,6 +54,7 @@ public:
         std::vector<ScrollEvent> scrollEvents;            // global frames / timestamps
         std::vector<PageStitcher::VisitTrace> visits;     // all visits of this page
         std::vector<PageStitcher::Gap> gaps;              // never-observed doc rows
+        std::vector<PageSubframe> subframes;              // regions that changed in place
     };
 
     // One frame of the session, with the answer to "which page, and where in

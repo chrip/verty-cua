@@ -1372,6 +1372,46 @@ extent is dead reckoning only and it cannot say how much of the inner document i
 never reached. Nested subframes (a subframe inside a subframe) are not attempted —
 nothing in the corpus has one, so there is nothing to measure a design against.
 
+### Output names a person can read, and a subframe belongs to a page — 2026-07-31
+
+Asked for as a naming tidy-up, and it turned out to be a modelling gap. Subframes
+were detected and reported at SESSION level, so a written file could not say which
+page it came from, and the benchmark did not archive them at all — they stayed in
+`outputs/` under the working name `pending_sub0_state00.png`, looking like they
+belonged to whichever run came next.
+
+Both are fixed by the same idea: **a subframe is on a page.**
+
+- **Attribution.** Detection stays session-wide, because a region is one region
+  whether or not the session navigated while it was there — but the states, inner
+  documents and change count are now split by the page each frame belonged to,
+  using the per-frame page trace. A region that outlives a navigation appears under
+  each page it was on, with that page's share of its evidence. Measured on
+  rw5_mobileframe: one phone mockup at 370×462, its 13 settled states distributed
+  as 1 / 5 / 2 / 5 across pages 0, 1, 4 and 6.
+- **Names.** Zero-padded to three digits and page-first, so alphabetical order is
+  reading order:
+
+  ```
+  run_…_err148.png                              the page
+  run_…_err148_page000_sub000_doc000.png        its subframe, stitched
+  run_…_err148_page000_sub000_state000.png      that subframe's states
+  run_…_err148_page000_sub000_state001.png
+  ```
+
+  Three digits because two is not enough for a real session (one recording
+  produced eleven pages, and a page can hold several subframes with dozens of
+  states). A page can hold `sub000`, `sub001`, … — an ajax gallery and a
+  scrollable comment section below it are two.
+- **Archiving.** The benchmark now archives every `pending*.png` the run wrote by
+  substituting the prefix, rather than enumerating the two names it used to know
+  about. The tool decides what it writes; the harness should not have to be told
+  again each time.
+
+Schema 5 moves `subframes[]` inside the page it belongs to. All 19 sessions PASS
+with every `totalError` and ghost score unchanged — this moved names and nesting,
+not pixels.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

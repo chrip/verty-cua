@@ -96,7 +96,7 @@ void SubframeTracker::observe(long frame, const cv::Mat& prev_gray, const cv::Ma
                    pending_.end());
 
     for (const cv::Rect& b : boxes) {
-        change_boxes_.push_back(b);
+        change_boxes_.emplace_back(b, frame);
         Pending p;
         p.box   = b;
         p.frame = frame;          // this frame already shows the new appearance
@@ -145,7 +145,8 @@ void SubframeTracker::finish()
                                             ws.push_back(b.width); hs.push_back(b.height); }
         g.median = cv::Rect(median_of(xs), median_of(ys), median_of(ws), median_of(hs));
     };
-    for (const cv::Rect& b : change_boxes_) {
+    for (const auto& [b, frame] : change_boxes_) {
+        (void)frame;
         Group* best = nullptr;
         double best_iou = SUBFRAME_MIN_IOU;
         for (Group& g : groups) {
@@ -187,8 +188,11 @@ void SubframeTracker::finish()
     for (const cv::Rect& r : kept) {
         Subframe sf;
         sf.rect = r;
-        for (const cv::Rect& b : change_boxes_)
-            if ((r & b).area() >= SUBFRAME_CONTAINED_FRAC * b.area()) ++sf.in_place_changes;
+        for (const auto& [b, frame] : change_boxes_)
+            if ((r & b).area() >= SUBFRAME_CONTAINED_FRAC * b.area()) {
+                ++sf.in_place_changes;
+                sf.change_frames.push_back(frame);
+            }
         for (const State& s : settled_)
             if ((r & s.box).area() >= SUBFRAME_CONTAINED_FRAC * s.box.area()) sf.states.push_back(s);
         std::sort(sf.states.begin(), sf.states.end(),

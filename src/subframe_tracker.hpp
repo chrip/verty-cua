@@ -55,6 +55,7 @@ public:
     struct Subframe {
         cv::Rect           rect;             // union of its states' boxes
         int                in_place_changes = 0;
+        std::vector<long>  change_frames;    // when it changed (for per-page views)
         std::vector<State> states;           // settled appearances, in order
         std::vector<InnerDoc> inner;         // runs it scrolled through, stitched
         [[nodiscard]] bool is_screenflow() const {
@@ -101,6 +102,10 @@ private:
     bool   verbose_;
     std::vector<Pending>  pending_;   // dwells still being timed (a handful)
     std::vector<State>    settled_;   // dwells that lasted
-    std::vector<cv::Rect> change_boxes_;   // every in-place change, for the count
+    // Every in-place change with the frame it happened on: the frame is what lets
+    // a session-wide region be reported per PAGE, since a region can outlive a
+    // navigation (an ad on every page of a site) and its evidence then belongs to
+    // more than one of them.
+    std::vector<std::pair<cv::Rect, long>> change_boxes_;
     std::vector<Subframe> subframes_;
 };

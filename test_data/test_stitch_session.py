@@ -330,16 +330,17 @@ def subframe_over(report, box):
     """
     bx, bw, bh = float(box["x"]), float(box["width"]), float(box["height"])
     best, best_score = None, 0.0
-    for sf in report.get("subframes", []):
-        r = sf["rect"]
-        overlap = max(0.0, min(bx + bw, r["x"] + r["w"]) - max(bx, r["x"]))
-        if overlap < 0.7 * r["w"]:
-            continue                       # not the same columns
-        if not (0.4 * bh <= r["h"] <= 1.2 * bh):
-            continue                       # not the same kind of size
-        score = r["w"] * r["h"]
-        if score > best_score:
-            best, best_score = sf, score
+    for page in report.get("pages", []):
+        for sf in page.get("subframes", []):
+            r = sf["rect"]
+            overlap = max(0.0, min(bx + bw, r["x"] + r["w"]) - max(bx, r["x"]))
+            if overlap < 0.7 * r["w"]:
+                continue                   # not the same columns
+            if not (0.4 * bh <= r["h"] <= 1.2 * bh):
+                continue                   # not the same kind of size
+            score = r["w"] * r["h"]
+            if score > best_score:
+                best, best_score = sf, score
     return best
 
 
@@ -690,14 +691,18 @@ def main():
     base = f"run_{now.strftime('%Y%m%dT%H%M%SZ')}_{tag}_err{total_error}"
     outputs = []
     # the tool writes pending.png for one page, pending_pageN.png for several
-    candidates = [("pending.png", f"{base}.png")] + \
-                 [(f"pending_page{i}.png", f"{base}_page{i}.png") for i in range(len(report.get("pages", [])))]
-    for src, dst in candidates:
-        s = os.path.join(out_dir, src)
-        if os.path.exists(s):
-            d = os.path.join(out_dir, dst)
-            os.replace(s, d)
-            outputs.append(os.path.relpath(d, REPO))
+    # Everything the run wrote is named `pending…` — the page stitches and, since
+    # schema 5, one file per subframe state and inner document. Archive by
+    # substituting the prefix rather than by enumerating: the tool decides what it
+    # writes, and a file left behind under the working name would look like it
+    # belonged to the next run.
+    for s in sorted(glob.glob(os.path.join(out_dir, "pending*.png"))):
+        name = os.path.basename(s)
+        if not name.startswith("pending"):
+            continue
+        d = os.path.join(out_dir, base + name[len("pending"):])
+        os.replace(s, d)
+        outputs.append(os.path.relpath(d, REPO))
     report_path = os.path.join(out_dir, base + ".json")
     os.replace(work_json, report_path)
 

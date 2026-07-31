@@ -34,8 +34,8 @@ bool SessionReport::write(const std::string& path,
                           const std::string& video_path,
                           const SessionProcessor& session,
                           const std::vector<std::string>& stitch_paths,
-                          const std::vector<std::vector<std::string>>& subframe_state_paths,
-                          const std::vector<std::vector<std::string>>& subframe_doc_paths)
+                          const Paths3& state_paths,
+                          const Paths3& doc_paths)
 {
     std::ofstream out(path);
     if (!out) return false;
@@ -54,12 +54,16 @@ bool SessionReport::write(const std::string& path,
     // where the scrollbar was legible the real height is stated next to it with
     // its own uncertainty.
     // (schema 2 added pages[].gaps and visits[].vtUncertaintyPx.)
-    // schema 4 adds subframes[]: regions that changed while the document did
+    // schema 4 added subframes[]: regions that changed while the document did
     // not, each classified by whether it ever held still (see
     // subframe_tracker.hpp). A "screenflow" carries its settled states as
-    // separate images with their own position in the frame; "noise" carries none,
-    // because a playing video has no state worth keeping.
-    out << "  \"schema\": 4,\n";
+    // separate images with their own position in the frame, plus innerDocuments[]
+    // where it scrolled its own content; "noise" carries none, because a playing
+    // video has no state worth keeping.
+    // schema 5 moves them INSIDE the page they belong to. A subframe is on a page,
+    // its written files carry that page in their name, and one page can hold
+    // several — an ajax gallery and a scrollable comment section below it.
+    out << "  \"schema\": 5,\n";
     out << "  \"video\": {\"path\": \"" << escape(video_path) << "\", "
         << "\"fps\": " << fps << ", "
         << "\"frames\": " << session.frame_count() << ", "
@@ -133,63 +137,60 @@ bool SessionReport::write(const std::string& path,
         for (size_t k = 0; k < p.gaps.size(); ++k)
             out << (k ? ", " : "")
                 << "{\"from\": " << p.gaps[k].from << ", \"to\": " << p.gaps[k].to << "}";
-        out << "]}" << (i + 1 < pages.size() ? "," : "") << "\n";
-    }
-    out << "  ],\n";
 
-    // ── Subframes ────────────────────────────────────────────────────────────
-    // A bounded region that changed while the document around it did not. Its
-    // position is given in FRAME coordinates, which is what a consumer needs to
-    // lay a state back over the page it came from; a state's own image is exactly
-    // that rectangle, so no scaling is implied.
-    out << "  \"subframes\": [";
-    const auto& subs = session.subframes();
-    for (size_t i = 0; i < subs.size(); ++i) {
-        const auto& sf = subs[i];
-        out << (i ? ",\n    " : "\n    ")
-            << "{\"rect\": {\"x\": " << sf.rect.x << ", \"y\": " << sf.rect.y
-            << ", \"w\": " << sf.rect.width << ", \"h\": " << sf.rect.height << "}, "
-            << "\"kind\": \"" << (sf.is_screenflow() ? "screenflow" : "noise") << "\", "
-            << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
-            << "\"settledStates\": " << sf.states.size() << ", ";
-        // Inner documents: runs the subframe SCROLLED through, stitched by the
-        // same pipeline one level down. Their images are taller than the subframe
-        // — that is the whole point — so `capturedExtent` is in the subframe's own
-        // document coordinates, not the frame's.
-        out << "\"innerDocuments\": [";
-        for (size_t k = 0; k < sf.inner.size(); ++k) {
-            const auto& d = sf.inner[k];
-            const bool have = i < subframe_doc_paths.size()
-                              && k < subframe_doc_paths[i].size()
-                              && !subframe_doc_paths[i][k].empty();
-            out << (k ? ", " : "")
-                << "{\"firstFrame\": " << d.first_frame
-                << ", \"lastFrame\": " << d.last_frame
-                << ", \"capturedExtent\": " << d.extent
-                << ", \"innerScrolls\": " << d.scrolls
-                << ", \"image\": " << (have ? "\"" + escape(subframe_doc_paths[i][k]) + "\"" : "null")
-                << "}";
-        }
-        out << "], \"states\": [";
-        if (sf.is_screenflow()) {
-            for (size_t k = 0; k < sf.states.size(); ++k) {
-                const auto& st = sf.states[k];
-                const bool have = i < subframe_state_paths.size()
-                                  && k < subframe_state_paths[i].size()
-                                  && !subframe_state_paths[i][k].empty();
-                out << (k ? ", " : "")
+        // ── Subframes of this page ───────────────────────────────────────────
+        // A region that changed while the document did not. Its position is in
+        // FRAME coordinates, which is what a consumer needs to lay a state back
+        // over the page it came from, and a state's image is exactly that
+        // rectangle. A page can hold several: an ajax gallery and a scrollable
+        // comment section below it are two.
+        out << "], \"subframes\": [";
+        for (size_t k = 0; k < p.subframes.size(); ++k) {
+            const auto& sf = p.subframes[k];
+            const auto* sp = (i < state_paths.size() && k < state_paths[i].size())
+                                 ? &state_paths[i][k] : nullptr;
+            const auto* dp = (i < doc_paths.size() && k < doc_paths[i].size())
+                                 ? &doc_paths[i][k] : nullptr;
+            out << (k ? ",\n      " : "\n      ")
+                << "{\"rect\": {\"x\": " << sf.rect.x << ", \"y\": " << sf.rect.y
+                << ", \"w\": " << sf.rect.width << ", \"h\": " << sf.rect.height << "}, "
+                << "\"kind\": \"" << (sf.screenflow ? "screenflow" : "noise") << "\", "
+                << "\"inPlaceChanges\": " << sf.in_place_changes << ", "
+                << "\"settledStates\": " << sf.states.size() << ", ";
+            // Runs the subframe SCROLLED through, stitched by the same pipeline one
+            // level down. Their images are taller than the subframe — that is the
+            // point — so capturedExtent is in the SUBFRAME's document coordinates.
+            out << "\"innerDocuments\": [";
+            for (size_t m = 0; m < sf.inner.size(); ++m) {
+                const auto& d = sf.inner[m];
+                const bool have = dp && m < dp->size() && !(*dp)[m].empty();
+                out << (m ? ", " : "")
+                    << "{\"firstFrame\": " << d.first_frame
+                    << ", \"lastFrame\": " << d.last_frame
+                    << ", \"capturedExtent\": " << d.extent
+                    << ", \"innerScrolls\": " << d.scrolls
+                    << ", \"image\": " << (have ? "\"" + escape((*dp)[m]) + "\"" : "null")
+                    << "}";
+            }
+            out << "], \"states\": [";
+            for (size_t m = 0; m < sf.states.size(); ++m) {
+                const auto& st = sf.states[m];
+                const bool have = sp && m < sp->size() && !(*sp)[m].empty();
+                out << (m ? ", " : "")
                     << "{\"frame\": " << st.frame
                     << ", \"t\": " << std::format("{:.3f}", st.t)
                     << ", \"heldFrames\": " << st.dwell
                     << ", \"rect\": {\"x\": " << st.box.x << ", \"y\": " << st.box.y
                     << ", \"w\": " << st.box.width << ", \"h\": " << st.box.height << "}"
-                    << ", \"image\": " << (have ? "\"" + escape(subframe_state_paths[i][k]) + "\"" : "null")
+                    << ", \"image\": " << (have ? "\"" + escape((*sp)[m]) + "\"" : "null")
                     << "}";
             }
+            out << "]}";
         }
-        out << "]}";
+        out << (p.subframes.empty() ? "" : "\n    ") << "]}"
+            << (i + 1 < pages.size() ? "," : "") << "\n";
     }
-    out << (subs.empty() ? "" : "\n  ") << "],\n";
+    out << "  ],\n";
 
     // ── Navigations ──────────────────────────────────────────────────────────
     out << "  \"navigations\": [";
