@@ -153,6 +153,25 @@ bool ScrollbarMap::matches(const ScrollbarReading& r) const
 // deepest reachable offset, and the document is one viewport taller than that.
 long ScrollbarMap::document_height() const
 {
+    // The thumb HEIGHT is the fingerprint of which document the map describes, and
+    // refit() keeps only the anchors sharing the dominant one — silently. For
+    // predicting an OFFSET that is fine: the fitted line describes the anchors it
+    // was fitted to. For claiming a DOCUMENT HEIGHT it is not, because the height
+    // is attributed to a page, and a page whose anchors carry two different thumb
+    // heights is a page holding more than one document. Measured on a shop
+    // catalogue: one page's map switched fingerprint from 279 to 362 as its visits
+    // were merged, and the height it then derived (1823px) was 67px SHORT of what
+    // the frames had already covered (1890px, every scroll verified as a genuine
+    // full-frame shift) — while declaring +/-8px. An admitted unknown is worth more
+    // than a number that contradicts the pixels.
+    if (used_ + rejected_ > 0) {
+        int agreeing = 0;
+        for (const Anchor& a : anchors_)
+            if (std::abs(a.thumb_h - fingerprint_) <= SB_THUMB_H_TOL) ++agreeing;
+        if (!anchors_.empty()
+            && static_cast<double>(agreeing) / anchors_.size() < SB_MIN_FINGERPRINT_SHARE)
+            return 0;
+    }
     // The slope must have been FITTED from real thumb travel. With the geometric
     // fallback the intercept is pinned but the slope is an assumption, and
     // extrapolating it the full length of a track magnifies the assumption

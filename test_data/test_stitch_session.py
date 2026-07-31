@@ -545,6 +545,27 @@ def score_realworld(report, session):
         # contain must still be reconstructed by some page. That is what catches
         # a truncation (the rw4 failure this block exists for) without asserting
         # which visit founds which page.
+        # Subframe expectations, where the manifest declares them: a region that
+        # changes while the document does not, with a floor on what it kept. The
+        # lab fixtures cover the three branches of that decision synthetically;
+        # this is the same guard on a real recording, and a floor rather than an
+        # exact count because the number of settled states depends on how the
+        # participant paused, not on the algorithm alone.
+        for want in exp.get("subframes") or []:
+            pg = pages[want["page"]] if want["page"] < len(pages) else {}
+            found = None
+            for sf in pg.get("subframes", []):
+                if sf["kind"] == want.get("kind", sf["kind"]):
+                    if found is None or sf["settledStates"] > found["settledStates"]:
+                        found = sf
+            checks[f"subframe{want['page']}Kind"] = bool(found)
+            checks[f"subframe{want['page']}States"] = (found or {}).get("settledStates", 0)
+            checks[f"subframe{want['page']}InnerDocs"] = len((found or {}).get("innerDocuments", []))
+            ok = (found is not None
+                  and checks[f"subframe{want['page']}States"] >= want.get("minStates", 0)
+                  and checks[f"subframe{want['page']}InnerDocs"] >= want.get("minInnerDocuments", 0))
+            checks["pass"] = checks["pass"] and ok
+
         present = exp.get("pageHeightsPresent") or []
         if present:
             checks["heightWindows"] = present
@@ -584,6 +605,9 @@ def print_realworld(checks, production, report):
               f"  reached bottom: {rb}"
               + (f"  measured drift {drift}px" if drift is not None else ""))
     if "pagesExpected" in checks:
+        for k, v in checks.items():
+            if k.startswith("subframe"):
+                print(f"  manifest expects:     {k} = {v}")
         print(f"  manifest expects:     pages={checks['pagesExpected']} "
               f"({'ok' if checks['pagesMatch'] else 'MISMATCH'})   "
               f"heights in {checks['heightWindows']} "

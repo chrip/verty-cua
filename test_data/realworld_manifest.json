@@ -278,6 +278,430 @@
     ],
     "note": "Mobile flow inside a phone mockup. Production emits 19 stitches under a HIGH sensitivity setting (a new document version per mutation); we merge revisits under Normal, so the count is deliberately not comparable. It used to be pinned at 5, which was wrong for a reason worth recording: 5 required the identity vote's concentration for visit [71..144] to land at 0.516, and sweeping the RNG seed at the then-current 120 samples showed its true value is 0.44 +/- 0.04 — the 5-page baseline was an artefact of seed 42, and every other seed gave 6 or 7. At 480 samples the value is 0.420 +/- 0.022, below REVISIT_MIN_CONCENTRATION (0.465) by about 2 sigma, so the visit is now reliably its own page and the count is 6 — with one further visit ([306..326], 0.552 +/- 0.037) about 2 sigma the other side of the same bar, which is why the expectation is a RANGE and not a number. Most of the frame is the phone mockup itself, identical between screens, so this session has no pixel-only answer to 'is a changed subframe the same document'; what it can still guard is that no document extent goes missing, which is what pageHeightsPresent asserts (the tall 1880 and 3824 stitches production also captured). Treat an over/under count outside [6,7] as hard."
    }
+  },
+  {
+   "name": "rw6_shopcatalog",
+   "description": "B2B power-tool shop, 9 pages, ajax product panels (crash regression case)",
+   "recording": "shopcatalog.mp4",
+   "video": {
+    "w": 1916,
+    "h": 930,
+    "frames": 738,
+    "fps": 4.66
+   },
+   "referenceStitches": [
+    {
+     "file": "shopcatalog_reference_1.jpg",
+     "w": 1920,
+     "h": 1896
+    },
+    {
+     "file": "shopcatalog_reference_2.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_3.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_4.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_5.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_6.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_7.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_8.jpg",
+     "w": 1920,
+     "h": 1712
+    },
+    {
+     "file": "shopcatalog_reference_9.jpg",
+     "w": 1920,
+     "h": 1896
+    },
+    {
+     "file": "shopcatalog_reference_10.jpg",
+     "w": 1920,
+     "h": 936
+    },
+    {
+     "file": "shopcatalog_reference_11.jpg",
+     "w": 1920,
+     "h": 1176
+    },
+    {
+     "file": "shopcatalog_reference_12.jpg",
+     "w": 1920,
+     "h": 936
+    },
+    {
+     "file": "shopcatalog_reference_13.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_14.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_15.jpg",
+     "w": 1920,
+     "h": 1952
+    },
+    {
+     "file": "shopcatalog_reference_16.jpg",
+     "w": 1920,
+     "h": 1472
+    },
+    {
+     "file": "shopcatalog_reference_17.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_18.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_19.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_20.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_21.jpg",
+     "w": 1920,
+     "h": 936
+    },
+    {
+     "file": "shopcatalog_reference_22.jpg",
+     "w": 1920,
+     "h": 1656
+    },
+    {
+     "file": "shopcatalog_reference_23.jpg",
+     "w": 1920,
+     "h": 1896
+    },
+    {
+     "file": "shopcatalog_reference_24.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_25.jpg",
+     "w": 1920,
+     "h": 1896
+    },
+    {
+     "file": "shopcatalog_reference_26.jpg",
+     "w": 1920,
+     "h": 1176
+    },
+    {
+     "file": "shopcatalog_reference_27.jpg",
+     "w": 1920,
+     "h": 2136
+    },
+    {
+     "file": "shopcatalog_reference_28.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_29.jpg",
+     "w": 1920,
+     "h": 1952
+    },
+    {
+     "file": "shopcatalog_reference_30.jpg",
+     "w": 1920,
+     "h": 936
+    },
+    {
+     "file": "shopcatalog_reference_31.jpg",
+     "w": 1920,
+     "h": 1056
+    },
+    {
+     "file": "shopcatalog_reference_32.jpg",
+     "w": 1920,
+     "h": 1176
+    }
+   ],
+   "expect": {
+    "pages": 9,
+    "pageHeightRange": [
+     [
+      1845,
+      1935
+     ],
+     [
+      885,
+      975
+     ],
+     [
+      885,
+      975
+     ],
+     [
+      1845,
+      1935
+     ],
+     [
+      885,
+      975
+     ],
+     [
+      885,
+      975
+     ],
+     [
+      1845,
+      1935
+     ],
+     [
+      885,
+      975
+     ],
+     [
+      1425,
+      1515
+     ]
+    ],
+    "note": "Added 2026-07-31 because it is the recording that caught a CRASH the suite could not see: a subframe's rectangle is the median of its changes' x, y, w and h taken independently, so it could reach past the frame edge, and the recursion then sized a stitcher to it while the reader clipped what it read — masks of one size, frames of another, abort. Nothing in the 19 committed sessions reproduced it. A catalogue page with a cookie banner, a hero carousel, product grids and ajax quick-view panels; every page reports an in-place region, which is what made it a good find. Production emits 32 stitches under its own sensitivity setting, so the count is not comparable — 9 is our measured baseline and this is a drift guard. Stable across two RNG seeds (page heights jitter +/-2px between them, which the windows absorb)."
+   }
+  },
+  {
+   "name": "rw7_screenflow",
+   "description": "embedded phone prototype tapped through screen by screen (subframe + inner document case)",
+   "recording": "screenflow.mp4",
+   "video": {
+    "w": 1678,
+    "h": 1020,
+    "frames": 424,
+    "fps": 4.8
+   },
+   "referenceStitches": [
+    {
+     "file": "screenflow_reference_1.jpg",
+     "w": 368,
+     "h": 840
+    },
+    {
+     "file": "screenflow_reference_2.jpg",
+     "w": 368,
+     "h": 688
+    },
+    {
+     "file": "screenflow_reference_3.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_4.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_5.jpg",
+     "w": 368,
+     "h": 696
+    },
+    {
+     "file": "screenflow_reference_6.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_7.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_8.jpg",
+     "w": 368,
+     "h": 832
+    },
+    {
+     "file": "screenflow_reference_9.jpg",
+     "w": 368,
+     "h": 696
+    },
+    {
+     "file": "screenflow_reference_10.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_11.jpg",
+     "w": 368,
+     "h": 840
+    },
+    {
+     "file": "screenflow_reference_12.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_13.jpg",
+     "w": 368,
+     "h": 784
+    },
+    {
+     "file": "screenflow_reference_14.jpg",
+     "w": 368,
+     "h": 888
+    },
+    {
+     "file": "screenflow_reference_15.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_16.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_17.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_18.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_19.jpg",
+     "w": 368,
+     "h": 1160
+    },
+    {
+     "file": "screenflow_reference_20.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_21.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_22.jpg",
+     "w": 368,
+     "h": 968
+    },
+    {
+     "file": "screenflow_reference_23.jpg",
+     "w": 368,
+     "h": 760
+    },
+    {
+     "file": "screenflow_reference_24.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_25.jpg",
+     "w": 368,
+     "h": 1072
+    },
+    {
+     "file": "screenflow_reference_26.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_27.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_28.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_29.jpg",
+     "w": 368,
+     "h": 712
+    },
+    {
+     "file": "screenflow_reference_30.jpg",
+     "w": 368,
+     "h": 648
+    },
+    {
+     "file": "screenflow_reference_31.jpg",
+     "w": 368,
+     "h": 800
+    },
+    {
+     "file": "screenflow_reference_32.jpg",
+     "w": 368,
+     "h": 800
+    },
+    {
+     "file": "screenflow_reference_33.jpg",
+     "w": 368,
+     "h": 1072
+    },
+    {
+     "file": "screenflow_reference_34.jpg",
+     "w": 368,
+     "h": 648
+    }
+   ],
+   "expect": {
+    "pages": 3,
+    "pageHeightRange": [
+     [
+      960,
+      1080
+     ],
+     [
+      1147,
+      1267
+     ],
+     [
+      960,
+      1080
+     ]
+    ],
+    "subframes": [
+     {
+      "page": 1,
+      "kind": "screenflow",
+      "minStates": 8,
+      "minInnerDocuments": 1
+     }
+    ],
+    "note": "Added 2026-07-31 as the real-data guard for the subframe machinery: a 361x507 phone mockup inside a 1678x1020 viewer, tapped through a bank-onboarding flow. The lab fixtures (gallery / gallery_video / gallery_scroll) cover the three branches synthetically; this covers them on a real recording, and its subframes[] expectation is what would catch a regression in the states or in the recursion. CAVEAT on the heights: the viewer page itself barely scrolls, so page 1's 1207px is one viewport plus ~187px that is probably still the mockup's own scrolling charged to the page — the residual the confinement test does not catch. It is recorded as a drift guard, not as truth. Production emits 34 stitches, one per inner screen, which is what our subframe states are for rather than our pages."
+   }
   }
  ]
 }

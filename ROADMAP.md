@@ -1498,6 +1498,51 @@ Worth writing down: a stack trace found this in one attempt after two rounds of
 reading code found nothing. `gdb -batch -ex run -ex bt` on the failing recording
 named the function, the caller and the operation.
 
+### Two more real recordings in the corpus, and what they found — 2026-07-31
+
+The suite's blind spot was the point: both of the day's real defects surfaced on
+recordings it does not score. So the two that earned it are in — with speaking
+names, gitignored pixels, and their production references derived as
+`<case>_reference_<i>.jpg` like the rest.
+
+- **rw6_shopcatalog** — a B2B power-tool shop: cookie banner, hero carousel,
+  product grids, ajax quick-view panels, 9 pages. This is the recording whose
+  crash the suite could not see.
+- **rw7_screenflow** — a 361×507 phone prototype inside a 1678×1020 viewer, tapped
+  through a bank-onboarding flow. The real-data guard for the subframe machinery:
+  its `expect` block carries a `subframes` entry (page 1 must report a screenflow
+  region with at least 8 settled states and at least one stitched inner document),
+  which is what would catch a regression the lab fixtures cannot.
+
+Both were measured over two RNG seeds before their expectations were written; page
+heights jitter ±2px between seeds and the windows absorb it. The suite is now 21
+sessions and takes about 4 minutes longer, most of it rw6 (176s).
+
+**rw6 failed `coverageHonest` on arrival, and the check was right.** Its page 3
+claimed 1890px captured of a document its own scrollbar map put at 1823±8. The
+scrolls were verified first — every one of dy 60, 120, 180, 240 explains the whole
+frame with a residual of 0.1-1.8px, so the page genuinely reached vt=960 and 1890
+is correct. The map was the liar, and the verbose trace said why: that page's map
+reports **two different thumb heights** (279, then 362 across 45 anchors), because
+identity merged visits from more than one document into it.
+
+The thumb height is the fingerprint of WHICH document a map describes. `refit()`
+keeps only the anchors sharing the dominant one — silently, which is right for
+predicting an offset (the fitted line describes the anchors it was fitted to) and
+wrong for claiming a document height, because that claim is attributed to a page.
+So a document height is now refused unless `SB_MIN_FINGERPRINT_SHARE` of the
+page's anchors agree on the fingerprint. rw6 page 3 now reports its height as
+**unknown**, which is the truthful answer, and every other estimate in the corpus
+survives untouched (rw2 3977±13, rw3 6544±29 and 4986±23, rw4 1449±5 and
+11613±39). Same principle as the existing rule that only a fitted slope may
+estimate at all: a number that contradicts the pixels is worth less than an
+admitted unknown.
+
+Still open on rw6, and recorded rather than fixed: a page holding visits with two
+thumb fingerprints is a page that probably should not have merged them. The
+scrollbar disagrees with the identifier about how many documents were there, and
+the scrollbar is the independent witness.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

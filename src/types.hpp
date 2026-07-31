@@ -333,6 +333,14 @@ constexpr double SB_MAX_REJECT_FRAC = 0.25;
 // symmetry assumption costs one thumb pixel of track height, worth a·1 document
 // pixels. Two is the honest allowance.
 constexpr int    SB_TRACK_SYMMETRY_PX = 2;
+// Share of a page's scrollbar anchors that must agree on the thumb height before a
+// DOCUMENT HEIGHT may be derived from them. The thumb height is the fingerprint of
+// which document the map describes, so anchors that disagree describe different
+// documents and the height belongs to neither. Measured on a shop catalogue whose
+// page merged visits with thumb heights 279 and 362: the height derived from the
+// dominant two thirds came out 67px short of what the frames had demonstrably
+// covered, declared to +/-8px.
+constexpr double SB_MIN_FINGERPRINT_SHARE = 0.80;
 constexpr int    SB_THUMB_H_TOL     = 2;    // document fingerprint match; measured 72 vs 576 (≫ tol)
 // A scrollbar-derived continuation is accepted only where content matching is
 // blind BY CONSTRUCTION: the predicted offset must leave the page's canvas less

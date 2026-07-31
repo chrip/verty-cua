@@ -26,7 +26,7 @@ anything.
 > embedded prototype tapped through screen by screen) each state is written as its
 > own image, while a region that never holds still is called noise and kept out of
 > the document model — and a machine-readable session report (`-r`, schema 4). All
-> measured by a reproducible benchmark: fourteen recorded lab sessions plus five
+> measured by a reproducible benchmark: fourteen recorded lab sessions plus seven
 > real screen recordings, scored by one command.
 >
 > Still a prototype: fixed-band edges carry a declared uncertainty (bands only
@@ -213,7 +213,7 @@ is useful to you, take it.
 
 ## The real-world corpus is not in this repository
 
-The five real screen recordings the benchmark scores against were recorded
+The seven real screen recordings the benchmark scores against were recorded
 manually on a private machine and are personal data, so neither they nor their
 reference images are committed (see `.gitignore`).
 `test_data/realworld_manifest.json` is the committed description of that corpus —
