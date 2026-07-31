@@ -120,6 +120,9 @@ std::vector<Transition> SessionProcessor::classify_transitions(
                 }
             }
         }
+        // Now that every state has its image, states that do not differ from the
+        // one before can be recognised and dropped.
+        subframes.drop_indistinct_states();
         subframes_ = subframes.subframes();
     }
     if (scrollbar_) scrollbar_->locate();

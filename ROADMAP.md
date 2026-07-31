@@ -1590,6 +1590,42 @@ The remaining eight are screens held for a single frame or crossed by a transiti
 the classifier reads as a change of its own; they are not recoverable by lowering a
 threshold, only by knowing what a zoom transition looks like.
 
+### Two states of one region have to look different — 2026-07-31
+
+Reported by eye: two consecutive state images of the shop catalogue were equal.
+They should never be — a state is a distinct appearance — and looking at the pairs
+found two separate causes, neither of which a single rule catches.
+
+**A change that straddles the region's edge.** The second state's own change box sat
+at x=1130 while its region began at x=1213, so 77% of it lay inside and the 0.70
+containment bar let it in. What it produced was a crop of the same two product
+tiles differing only by a pale hover overlay on a tile mostly OUTSIDE the frame.
+A state is an appearance OF the region, so what changed has to be in it:
+`SUBFRAME_CONTAINED_FRAC` is now 0.90. Every state of the embedded phone screens
+and of the lab panels lies fully inside its region, so the higher bar costs them
+nothing.
+
+**The same appearance recorded twice.** Two dwells can settle at different frames,
+in different parts of a region, and leave the region looking exactly as it did.
+Measured over every consecutive state pair in the corpus, the share of pixels that
+differ: two pairs at **0.00% and 0.07%**, then nothing until 5.6%, with real screen
+changes from 7.7% up. States closer than `SUBFRAME_STATE_MIN_DIFF_FRAC` (1%) to the
+one before are dropped, which needs the images and therefore happens after they are
+cropped — nothing earlier in the pipeline can answer a question about pixels.
+
+**A third rule was tried and rejected on the evidence.** A region cannot have two
+appearances at once, so dwells that overlap in time looked like the clean test —
+and 3 of the corpus's 78 states do overlap, including the reported pair. But one of
+the overlapping pairs on the embedded flow is an empty date-of-birth form followed
+by a **filled** one: two real screens whose dwells overlap because two parts of the
+region repainted a frame apart. Dropping on overlap would have destroyed it. Nor
+does image difference alone separate them: the reported duplicate sits at 5.6% and
+the filled form at 7.8%.
+
+Effect: the shop catalogue goes from 12 states to 5, the embedded flow from 26 to
+23, and the lab fixture still reports exactly its 30 taps. All 21 sessions PASS with
+every fixture at its established `totalError`.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

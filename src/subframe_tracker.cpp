@@ -1,5 +1,6 @@
 #include "subframe_tracker.hpp"
 #include <algorithm>
+#include <iomanip>
 #include <iostream>
 
 namespace {
@@ -267,5 +268,36 @@ void SubframeTracker::set_state_image(long frame, const cv::Mat& frame_bgr)
         if (r.area() <= 0) continue;
         for (State& s : sf.states)
             if (s.frame == frame && s.image.empty()) s.image = frame_bgr(r).clone();
+    }
+}
+
+// ── drop_indistinct_states ────────────────────────────────────────────────────
+void SubframeTracker::drop_indistinct_states()
+{
+    for (Subframe& sf : subframes_) {
+        std::vector<State> kept;
+        for (State& s : sf.states) {
+            if (s.image.empty()) continue;
+            if (!kept.empty() && !kept.back().image.empty()
+                && kept.back().image.size() == s.image.size()) {
+                cv::Mat a, b, diff, smooth, changed;
+                cv::cvtColor(kept.back().image, a, cv::COLOR_BGR2GRAY);
+                cv::cvtColor(s.image, b, cv::COLOR_BGR2GRAY);
+                cv::absdiff(a, b, diff);
+                cv::blur(diff, smooth, cv::Size(3, 3));
+                cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+                const double frac = static_cast<double>(cv::countNonZero(changed))
+                                    / std::max(1, changed.rows * changed.cols);
+                if (frac < SUBFRAME_STATE_MIN_DIFF_FRAC) {
+                    if (verbose_)
+                        std::cout << "[subframe] state at frame " << s.frame
+                                  << " dropped: " << std::fixed << std::setprecision(2)
+                                  << frac * 100 << "% of it differs from the state before\n";
+                    continue;
+                }
+            }
+            kept.push_back(std::move(s));
+        }
+        sf.states = std::move(kept);
     }
 }

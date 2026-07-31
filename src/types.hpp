@@ -279,12 +279,26 @@ constexpr long   SUBFRAME_MAX_ANCHOR_DRIFT = 100;
 // settled states each. The regions this is for are an order larger: the lab panel
 // is 7% of its frame, an embedded phone screen 12%, a fixed video ad 18%.
 constexpr double SUBFRAME_MIN_AREA_FRAC  = 0.05;
-// How much of a box must lie inside a region to belong to it. A screen swap
+// How much of a box must lie INSIDE a region to belong to it. A screen swap
 // repaints all of its region on one tap and a corner of it on the next, so its
 // changes have wildly different shapes: attribution has to be containment, not
 // overlap ratio (measured: by ratio, an embedded phone screen kept 2 of its 29
 // settled states).
-constexpr double SUBFRAME_CONTAINED_FRAC = 0.70;
+//
+// 0.9 rather than 0.7, because a state is an appearance OF the region and what
+// changed therefore has to be in it, not merely overlapping it. Measured on a
+// product grid: a hover on the tile at x=1130 lay 77% inside the region starting at
+// x=1213, so it was attributed there and written as a state — giving two crops of
+// the same two tiles that differ only by a pale overlay on a tile mostly outside
+// the frame. Every state of the embedded phone screens and of the lab panels lies
+// fully inside its region, so the higher bar costs them nothing.
+constexpr double SUBFRAME_CONTAINED_FRAC = 0.90;
+// Two states of one region must actually look different. Measured share of pixels
+// that differ between consecutive states, over the whole corpus: two pairs at 0.00%
+// and 0.07% — the same appearance recorded twice, because something elsewhere in the
+// region settled again — and then nothing until 5.6%, with real screen changes at
+// 7.7% and up. 1% sits in that gap with room on both sides.
+constexpr double SUBFRAME_STATE_MIN_DIFF_FRAC = 0.01;
 
 // ── Vertical scrollbar: absolute-offset evidence for unexplained jumps ───────
 // A user DRAGGING the scrollbar thumb (or flinging) moves the document by

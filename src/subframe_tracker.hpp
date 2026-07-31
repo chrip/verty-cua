@@ -79,6 +79,13 @@ public:
     [[nodiscard]] std::vector<long> state_frames_needed() const;
     void set_state_image(long frame, const cv::Mat& frame_bgr);
 
+    // Drop states that do not differ from the one kept before them. Called once
+    // the images exist, because "different appearance" is a question about pixels
+    // and nothing earlier in the pipeline can answer it: two dwells can settle at
+    // different frames, in different parts of a region, and still leave the region
+    // looking exactly as it did.
+    void drop_indistinct_states();
+
     // Close any dwell still open at the end of the video, then group the settled
     // states into subframes by overlap.
     void finish();
