@@ -77,7 +77,8 @@ void PageStitcher::analyze_visit(const PageVisit& visit, long vt_start)
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
         Transition tr = classifier_.classify(prev_gray, curr_gray,
-                                             cv::Mat(), noise_accumulator_.mask());
+                                             cv::Mat(), noise_accumulator_.mask(),
+                                             subframes_);
         if (tr.type == TransitionType::Scroll) {
             accumulator_.accumulate(prev_gray, curr_gray);
             vt = std::max(0L, vt + tr.dy);
@@ -156,7 +157,7 @@ void PageStitcher::refine_visit(const PageVisit& visit, long vt_start,
         cv::cvtColor(f.bgr, curr_gray, cv::COLOR_BGR2GRAY);
 
         Transition tr = classifier_.classify(prev_gray, curr_gray,
-                                             fixed_mask_, noise_mask_);
+                                             fixed_mask_, noise_mask_, subframes_);
         if (tr.type == TransitionType::Scroll)
             vt = std::max(0L, vt + tr.dy);
 

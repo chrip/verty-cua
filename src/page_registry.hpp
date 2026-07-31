@@ -47,6 +47,11 @@ public:
 
     [[nodiscard]] const std::vector<PageRecord>& records() const { return records_; }
 
+    // Handed to every page stitcher this registry creates (see
+    // PageStitcher::set_subframes): those stitchers run their own classifier
+    // passes and need the same knowledge of in-place regions as the session pass.
+    void set_subframes(std::vector<cv::Rect> rects) { subframes_ = std::move(rects); }
+
 private:
     std::string video_path_;
     int         frame_w_;
@@ -55,7 +60,8 @@ private:
     bool        verbose_;
     Sensitivity sensitivity_;
 
-    const ScrollbarTracker* scrollbar_ = nullptr;   // session-wide, not owned
+    const ScrollbarTracker* scrollbar_ = nullptr;
+    std::vector<cv::Rect>   subframes_;   // session-wide, not owned
     PageIdentifier          identifier_;
     std::vector<PageRecord> records_;
     int                     last_page_ = -1;        // page of the previous visit

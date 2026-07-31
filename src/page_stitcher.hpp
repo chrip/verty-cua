@@ -60,6 +60,19 @@ public:
                  const ScrollbarTracker* scrollbar = nullptr,
                  const cv::Rect& roi = cv::Rect());
 
+    // Rectangles a previous pass found to change IN PLACE while the document stood
+    // still. This class runs its own classifier over each visit, twice, and those
+    // passes decide the offsets the canvas is built from — so they need the same
+    // knowledge the session pass has, or a subframe's own scrolling is charged to
+    // the page here after being refused there. Measured on an embedded phone flow:
+    // the session pass reported no scroll while the page still claimed 187px of
+    // document that never existed, from six dys whose evidence was 99.4-99.9%
+    // inside the mockup.
+    //
+    // NOT set when this stitcher IS a subframe (see subframe_stitcher.hpp): inside
+    // one, its own scrolling is the document.
+    void set_subframes(std::vector<cv::Rect> rects) { subframes_ = std::move(rects); }
+
     // Analyze one visit of this page (runs both analysis passes).
     //
     // bridged marks a visit that CONTINUES the previous one after a jump too
@@ -136,6 +149,7 @@ public:
 private:
     std::string video_path_;
     cv::Rect    roi_;          // empty = the whole frame
+    std::vector<cv::Rect> subframes_;
     int         frame_w_;
     int         frame_h_;
     double      fps_;

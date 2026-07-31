@@ -201,6 +201,9 @@ bool SessionProcessor::run()
     // recordings — are dropped: a page has content, a white frame does not.
     PageRegistry registry(video_path_, frame_w_, frame_h_, fps_, verbose_,
                           sensitivity_, scrollbar_.get());
+    // The stitchers run their own classifier passes, so they need what pass 1
+    // learned about in-place regions too.
+    registry.set_subframes(subframe_rects);
     navigations_.clear();
     std::vector<PageVisit> blank_visits;
     int  prev_page = 0;

@@ -154,6 +154,7 @@ PageRegistry::assign(const PageVisit& visit, const cv::Mat& first_frame_gray)
         records_.push_back({});
         records_.back().stitcher = std::make_unique<PageStitcher>(
             video_path_, frame_w_, frame_h_, fps_, verbose_, a.pageId, scrollbar_);
+        records_.back().stitcher->set_subframes(subframes_);
     }
 
     PageRecord& rec = records_[a.pageId];
