@@ -193,10 +193,29 @@ constexpr int    SUBFRAME_MIN_CHANGED_PX = 5000;
 // and an embedded phone screen is 12%.
 constexpr double SUBFRAME_MAX_AREA_FRAC  = 0.60;
 // Transitions a region must hold perfectly still for, after changing, for that
-// appearance to count as a STATE somebody could have looked at. Measured share
-// of in-place changes that reach it: lab animated panel 0%, corpus video ad 0%,
-// real embedded phone screens 31% and 39%, lab panel tapped 30 times 100%.
-constexpr int    SUBFRAME_SETTLE_FRAMES  = 4;
+// appearance to count as a STATE somebody could have looked at. Measured share of
+// in-place changes that reach it: lab animated panel 0%, corpus video ad 0%, real
+// embedded phone screens 31% and 39%, lab panel tapped 30 times 100%.
+//
+// It was 4, which cost real screens on a recording whose prototype animates a zoom
+// between screens and switches them fast: at that recording's own 4.80 fps, four
+// still transitions mean 0.83s of stillness, and many of its screens were held for
+// less. Swept end to end, screens found against what the negative cases keep:
+//
+//        settle   embedded flow   lab 30 taps   animated panel   video ad
+//             4              16            30                0          0
+//             3              22            30                0          0
+//             2              26            30                0          0
+//             1              28            30                0          0
+//
+// The negative cases cost nothing at any setting, and the reason is structural: a
+// playing video changes on EVERY transition, so it never has a still frame at all,
+// while a screen a human looked at always does. 2 rather than 1 because the corpus
+// only contains animations that repaint every frame — one repainting every OTHER
+// frame would satisfy a single still transition and produce a state per frame pair,
+// and there is no recording here to vouch otherwise. Two consecutive still
+// transitions excludes that too.
+constexpr int    SUBFRAME_SETTLE_FRAMES  = 2;
 // Settled states that make a region a SCREEN FLOW rather than noise. Two is not
 // enough: the lab hostile fixture's animated region happens to hold still twice in
 // its 204 frames and would qualify on two. Three is the smallest number that

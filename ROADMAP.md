@@ -1543,6 +1543,53 @@ thumb fingerprints is a page that probably should not have merged them. The
 scrollbar disagrees with the identifier about how many documents were there, and
 the scrollbar is the independent witness.
 
+### How long a screen must hold still — 2026-07-31
+
+Reported against the embedded screen flow: its prototype animates a ZOOM between
+screens, which at the top and bottom edges looks like a scroll, and it switches them
+fast. The question asked was whether the sampling rate could be raised for that
+recording alone.
+
+It cannot, and it does not need to be: **verty already classifies every consecutive
+pair of frames** — 423 transitions for 424 frames on that recording — and 4.80 fps is
+the recording's own rate, not a setting. The real lever was the settle threshold: a
+region's appearance counts as a STATE only after it holds perfectly still for
+`SUBFRAME_SETTLE_FRAMES` transitions, and at 4 that meant 0.83s of stillness at this
+recording's rate, which is longer than many of its screens were left on screen.
+
+Swept end to end — screens recovered against what the regions that must keep nothing
+actually kept:
+
+| settle | embedded flow | lab 30 taps | animated panel | video ad |
+|---|---|---|---|---|
+| 4 (was) | 16 | 30 | 0 | 0 |
+| 3 | 22 | 30 | 0 | 0 |
+| **2 (now)** | **26** | **30** | **0** | **0** |
+| 1 | 28 | 30 | 0 | 0 |
+
+The negative cases cost nothing at any setting, and the reason is structural rather
+than lucky: a playing video changes on EVERY transition, so it never has a still
+frame at all, while a screen a human looked at always does. That is the same
+observation the whole decision rests on, seen from the other side.
+
+**2 rather than 1**, even though 1 measures clean: every animation in the corpus
+repaints on every frame, so nothing here can vouch for an animation repainting every
+OTHER frame — which would satisfy a single still transition and yield a state per
+frame pair. Two consecutive still transitions excludes that as well, and costs two
+screens of the twenty-eight.
+
+Result on that recording: **26 of the ~34 screens production emitted**, each a clean
+crop with no zoom-transition frames among them — home screen, bank registration,
+confirmation code, phone number, personal details, three progressive date-of-birth
+screens, two address screens, video identification, bank selection, account choice,
+login, two consent screens, card creation, "Du hast es geschafft", Google Pay, terms,
+verification, card added. All 21 sessions PASS with every fixture at its established
+`totalError`, and the lab assertions unchanged (30 taps, 0 for the animated panel).
+
+The remaining eight are screens held for a single frame or crossed by a transition
+the classifier reads as a change of its own; they are not recoverable by lowering a
+threshold, only by knowing what a zoom transition looks like.
+
 The robustness goal (see the standing-goal section) gets its dedicated pass:
 everything the corpus has surfaced that isn't fixed yet.
 - **Mouse cursor**: small moving diff blobs erode the fixed bands and can

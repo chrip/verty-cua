@@ -696,11 +696,11 @@
      {
       "page": 1,
       "kind": "screenflow",
-      "minStates": 8,
+      "minStates": 14,
       "minInnerDocuments": 1
      }
     ],
-    "note": "Added 2026-07-31 as the real-data guard for the subframe machinery: a 361x507 phone mockup inside a 1678x1020 viewer, tapped through a bank-onboarding flow. The lab fixtures (gallery / gallery_video / gallery_scroll) cover the three branches synthetically; this covers them on a real recording, and its subframes[] expectation is what would catch a regression in the states or in the recursion. CAVEAT on the heights: the viewer page itself barely scrolls, so page 1's 1207px is one viewport plus ~187px that is probably still the mockup's own scrolling charged to the page — the residual the confinement test does not catch. It is recorded as a drift guard, not as truth. Production emits 34 stitches, one per inner screen, which is what our subframe states are for rather than our pages."
+    "note": "Added 2026-07-31 as the real-data guard for the subframe machinery: a 361x507 phone mockup inside a 1678x1020 viewer, tapped through a bank-onboarding flow. The lab fixtures (gallery / gallery_video / gallery_scroll) cover the three branches synthetically; this covers them on a real recording, and its subframes[] expectation is what would catch a regression in the states or in the recursion. CAVEAT on the heights: the viewer page itself barely scrolls, so page 1's 1207px is one viewport plus ~187px that is probably still the mockup's own scrolling charged to the page — the residual the confinement test does not catch. It is recorded as a drift guard, not as truth. Production emits 34 stitches, one per inner screen, which is what our subframe states are for rather than our pages. Its screens are separated by a zoom transition and switched fast, so how many of them are recoverable depends on SUBFRAME_SETTLE_FRAMES: at 4 still transitions (0.83s at this recording's 4.80 fps) verty found 16 of the ~34 production emitted, at 2 it finds 26. The floor here is deliberately well under the measured count, because how long a participant left each screen on screen is a property of the participant."
    }
   }
  ]
