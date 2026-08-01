@@ -261,6 +261,35 @@ constexpr double SUBFRAME_CONFINED_CHANGE_FRAC = 0.90;
 // phone screens, a fixed video ad, the lab panels), content columns that must not
 // 50-61%. The gate sits in the empty middle.
 constexpr double SUBFRAME_MAX_WIDTH_FRAC = 0.40;
+// Of the FRAME's width, and measured to be the better denominator than the one that
+// sounds more principled. A region's size relative to the document's own content
+// area — the frame minus the chrome — is what "a frame WITHIN the content" ought to
+// mean, and how much furniture surrounds that content is not the region's business.
+// Tried, over all 144 candidates the corpus produces (16 that must be kept, 128 that
+// must be refused), with the interior read the way PageStitcher reads it:
+//
+//              must keep      must refuse    separable by one constant?
+//   width, frame     <= 38.0%     >= 49.6%   yes — 0.40 sits in the gap
+//   width, interior  <= 62.1%     >= 49.9%   NO  — the ranges cross
+//   area,  frame     >=  5.44%    <=  4.99%  yes — 0.05 sits in the gap
+//   area,  interior  >=  6.26%    <=  6.49%  NO  — the ranges cross
+//
+// The reason is that the chrome fraction itself varies from 0% to 50% across the
+// corpus, so dividing by the interior injects that variance into the very quantity
+// being thresholded: it inflates the lab panels (24.7% -> 40.4% of width, on a
+// 782px interior in a 1280px frame) while barely moving a real site's content column
+// (49.6% -> 49.9%, on a 1874px interior in a 1918px frame), and the two populations
+// meet. Keeping the hostile fixture's 486px panel would then admit a news portal's
+// 951px article column and a landing page's 950px band.
+//
+// So this is frame-relative on purpose, and it is the frame that is wrong when the
+// document does NOT fill the frame — a browser window inside a desktop recording,
+// where a 316x255 panel is 7.0% of the browser's content area but 3.9% of a full-HD
+// frame and is dropped. That case needs a viewport rectangle distinct from the frame
+// (also needed by the scrollbar tracker, captured_extent, the scroll veto's band
+// logic and the identical-frame active area — all of which read frame_w_/frame_h_ as
+// "the viewport"), not a different denominator here. No corpus recording is windowed,
+// so there is nothing to measure such a model against yet.
 // A subframe's rectangle is a VIEWPORT rectangle, so reporting one asserts that the
 // rectangle names the same content every time it is cropped. That holds only while
 // the document does not move underneath it. If it does, consecutive states are

@@ -175,7 +175,22 @@ void SubframeTracker::finish()
     std::vector<cv::Rect> regions;
     for (const Group& g : groups) {
         if (static_cast<int>(g.boxes.size()) < SUBFRAME_MIN_CHANGES) continue;
-        if (g.median.area() < SUBFRAME_MIN_AREA_FRAC * frame_area) continue;
+        // Every candidate that got this far is traced, kept or not. A refused
+        // candidate otherwise leaves no trace anywhere — not in the report, not in
+        // the log — so the only way to see why a region went missing was to build an
+        // instrumented binary, which is how the two size rules below came to be
+        // re-measured in the first place.
+        const double area_frac  = g.median.area() / frame_area;
+        const double width_frac = static_cast<double>(g.median.width) / frame_w_;
+        if (verbose_)
+            std::cout << "[subframe candidate] " << g.median.width << "×" << g.median.height
+                      << " at (" << g.median.x << "," << g.median.y << ")  "
+                      << g.boxes.size() << " changes  " << area_frac * 100
+                      << "% of the frame's area, " << width_frac * 100 << "% of its width"
+                      << (area_frac < SUBFRAME_MIN_AREA_FRAC ? "  REFUSED: too small"
+                          : width_frac > SUBFRAME_MAX_WIDTH_FRAC ? "  REFUSED: too wide"
+                          : "  kept") << "\n";
+        if (area_frac < SUBFRAME_MIN_AREA_FRAC) continue;
         // A subframe is an element INSIDE the content flow, so it is narrower than
         // the content area; a region spanning the viewport's width is the page's own
         // content changing, not a frame within it. Without this the states of a
@@ -186,7 +201,7 @@ void SubframeTracker::finish()
         // 356×160 tiles scattered across it, each covering 1-23% of what it was
         // cropped to. The lab panels and the real embedded phone screens cover
         // 90-127% of theirs.
-        if (g.median.width > SUBFRAME_MAX_WIDTH_FRAC * frame_w_) continue;
+        if (width_frac > SUBFRAME_MAX_WIDTH_FRAC) continue;
         regions.push_back(g.median);
     }
     // Largest first, so a region that is part of a bigger one folds into it.
