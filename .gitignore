@@ -4,12 +4,28 @@ build/
 
 # generated recording sessions (frames/*.jpg, session.mp4, outputs/, ground_truth.json)
 test_data/session_*/
+test_data/session_*
 
 # real-world production sessions (user data — never committed; see realworld_manifest.json)
 test_data/realworld/
+test_data/realworld
 
 # private mapping from the corpus's speaking names back to the original recordings
 test_data/realworld_sources.local.json
 
 # python bytecode from the benchmark harness
 __pycache__/
+
+# ── Verty-CUA ────────────────────────────────────────────────────────────────
+# Normalized trajectory manifests point at frames living in the source repos;
+# regenerate them with the adapters rather than committing paths.
+trajectories/
+*.jsonl
+
+# rendered verification sheets — regenerate with review_sheet.py
+review/
+
+# Generated analysis artifacts — regenerate with the adapters and verty-replay
+changemaps/
+m4/
+*.log

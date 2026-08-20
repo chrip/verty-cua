@@ -1,0 +1,4 @@
+data/screenspotv2_image/
+data/*.zip
+results/
+data/*.json

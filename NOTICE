@@ -1,7 +1,9 @@
-verty
+verty-cua
 Copyright 2026 Christoph Schaefer
 
 This product includes software developed as a personal learning project.
+It is a fork of verty (https://github.com/chrip/verty), from which the
+perception layer in src/perception and the corpus tooling are inherited.
 
 Third-party dependencies (not distributed with this source):
   * OpenCV — https://opencv.org — Apache License 2.0 (OpenCV 4.5 and later).

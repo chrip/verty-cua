@@ -1,0 +1,197 @@
+#include "perception/transition_classifier.hpp"
+#include <algorithm>
+#include <vector>
+
+// ── scroll_explains ───────────────────────────────────────────────────────────
+// Vote histograms can be fooled by periodic content (stripes, text lines) into
+// a "valid" dy on a page change. A genuine scroll must EXPLAIN the transition:
+// of the pixels that CHANGED between the frames (unshifted), nearly all must be
+// explained by the dy shift. Restricting to unshifted-changed pixels keeps
+// chrome and whitespace out of the denominator (they never changed), so the
+// check needs no fixed mask; the per-band MEDIAN makes it robust against a
+// bounded animated region, which only dirties its own bands.
+// Measured (maskless): true scrolls ≤ 0.002; false scrolls 0.114 and 0.999.
+bool TransitionClassifier::scroll_explains(const cv::Mat& prev_gray,
+                                           const cv::Mat& curr_gray,
+                                           int dy, const cv::Mat& ignore_mask)
+{
+    const int H = curr_gray.rows;
+    const int W = curr_gray.cols;
+    if (std::abs(dy) >= H) return false;
+
+    // curr(y) corresponds to prev(y + dy); overlapping row ranges.
+    const int overlap = H - std::abs(dy);
+    const cv::Rect prev_roi(0, std::max(dy, 0),  W, overlap);
+    const cv::Rect curr_roi(0, std::max(-dy, 0), W, overlap);
+
+    auto changed_mask = [](const cv::Mat& a, const cv::Mat& b) {
+        cv::Mat diff, smooth, changed;
+        cv::absdiff(a, b, diff);
+        cv::blur(diff, smooth, cv::Size(3, 3));
+        cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+        return changed;
+    };
+
+    // Both in curr coordinates: what changed without the shift, and what still
+    // differs under the dy hypothesis.
+    cv::Mat changed0 = changed_mask(prev_gray(curr_roi), curr_gray(curr_roi));
+    cv::Mat changedS = changed_mask(prev_gray(prev_roi), curr_gray(curr_roi));
+    if (!ignore_mask.empty())
+        changed0.setTo(0, ignore_mask(curr_roi));
+
+    cv::Mat unexplained;
+    cv::bitwise_and(changed0, changedS, unexplained);
+
+    std::vector<double> fracs;
+    std::vector<int>    quiet;   // bands with no measurable residual
+    for (int y = 0; y + RESIDUAL_BAND_H <= overlap; y += RESIDUAL_BAND_H) {
+        const cv::Rect band(0, y, W, RESIDUAL_BAND_H);
+        const int n = cv::countNonZero(changed0(band));
+        if (n < 200) { quiet.push_back(y); continue; }   // no evidence in it
+        fracs.push_back(static_cast<double>(cv::countNonZero(unexplained(band))) / n);
+    }
+    // A real scroll changes many rows; if nothing changed anywhere, a nonzero
+    // dy claim has no supporting evidence.
+    if (fracs.empty()) return false;
+
+    // A quiet band carries no residual, but for a nonzero dy it is not neutral
+    // either: content moves through EVERY band, so a band with texture that
+    // stayed put is evidence against the hypothesis. Enough of the informative
+    // bands must therefore have changed at all — otherwise the median can be
+    // carried by a couple of flat-on-flat coincidences (measured: an in-place
+    // panel swap 320px below a same-shade header produced a perfect median at
+    // dy = −320 from 3 changed bands out of 18, on all ten repetitions).
+    //
+    // Only the quiet bands need their texture measured, and only while the
+    // ratio can still fall below the bar — a scroll that changed most of its
+    // bands passes before any stddev is computed.
+    // changed / informative ≥ FRAC  ⟺  informative ≤ changed / FRAC
+    const double max_informative =
+        static_cast<double>(fracs.size()) / SCROLL_MIN_CHANGED_BAND_FRAC;
+    if (static_cast<double>(fracs.size() + quiet.size()) > max_informative) {
+        double informative = static_cast<double>(fracs.size());
+        for (int y : quiet) {
+            cv::Scalar mean, stddev;
+            cv::meanStdDev(curr_gray(curr_roi)(cv::Rect(0, y, W, RESIDUAL_BAND_H)), mean, stddev);
+            if (stddev[0] < IDENT_MIN_STDDEV) continue;   // flat: nothing to show
+            if (++informative > max_informative) return false;
+        }
+    }
+
+    std::nth_element(fracs.begin(), fracs.begin() + fracs.size() / 2, fracs.end());
+    return fracs[fracs.size() / 2] <= SCROLL_RESIDUAL_MEDIAN_MAX;
+}
+
+Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
+                                          const cv::Mat& curr_gray,
+                                          const cv::Mat& fixed_mask,
+                                          const cv::Mat& dynamic_mask,
+                                          const std::vector<cv::Rect>& subframes)
+{
+    cv::Mat diff;
+    cv::absdiff(prev_gray, curr_gray, diff);
+
+    // ── Did anything change, in the part of the viewport that CAN change? ────
+    // This used to be a frame-wide mean, which cannot see a total change of a
+    // sub-region: an embedded phone screen is 12% of the frame and mostly white,
+    // so a complete screen swap moves the frame mean to 0.9-3.5 against a 2.0
+    // bar and read as a duplicate frame. Measured on one recording: thirteen
+    // different app screens inside a single visit, every boundary discarded.
+    //
+    // So the mean is taken over the ACTIVE area — the frame minus the pixels
+    // that carry no change signal: confirmed chrome, and confirmed persistent
+    // noise (a playing fixed video ad, whose churn must still read as Identical
+    // so the segmenter's debounce can close during it). Where the estimate is
+    // not mature enough to leave a meaningful area, the whole frame is used.
+    cv::Mat ignore;
+    if      (fixed_mask.empty())   ignore = dynamic_mask;
+    else if (dynamic_mask.empty()) ignore = fixed_mask;
+    else                           cv::bitwise_or(fixed_mask, dynamic_mask, ignore);
+    double active = static_cast<double>(diff.total());
+    if (!ignore.empty()) {
+        const double a = active - cv::countNonZero(ignore);
+        if (a >= IDENTICAL_MIN_ACTIVE_FRAC * active) active = a;
+        else                                         ignore.release();
+    }
+    cv::Mat active_diff = diff;
+    if (!ignore.empty()) { active_diff = diff.clone(); active_diff.setTo(0, ignore); }
+    if (active <= 0 || cv::sum(active_diff)[0] / active < IDENTICAL_FRAME_MAD)
+        return {TransitionType::Identical, 0};
+
+    // ── Is this change the DOCUMENT's, or one region's? ─────────────────────
+    // A dy whose evidence sits inside a region that changes in place belongs to
+    // that region. Without this test an embedded phone screen scrolling its own
+    // content was read as the page scrolling: the canvas grew by content that
+    // never existed and every viewport-fixed element on the page was written once
+    // per phantom offset. The changed mask is computed here and reused by the
+    // page-change spread below, so the test costs a count, not a pass.
+    //
+    // Every rect handed here is already narrower than SUBFRAME_MAX_WIDTH_FRAC of
+    // the frame: SubframeTracker will not report a wider one, because a region
+    // spanning the viewport's width is the page's own content area. That matters
+    // here too — refusing a dy inside such a region refuses genuine document
+    // scrolls, which cost session_manyjumps its re-localization when the rule was
+    // first written without the width bound.
+    cv::Mat smooth, changed;
+    cv::blur(diff, smooth, cv::Size(3, 3));
+    cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+    bool confined = false;
+    if (!subframes.empty()) {
+        const int total = cv::countNonZero(changed);
+        if (total > 0) {
+            const cv::Rect bounds(0, 0, changed.cols, changed.rows);
+            for (const cv::Rect& r : subframes) {
+                const cv::Rect c = r & bounds;
+                if (c.area() <= 0) continue;
+                if (cv::countNonZero(changed(c))
+                    >= SUBFRAME_CONFINED_CHANGE_FRAC * total) { confined = true; break; }
+            }
+        }
+    }
+
+    // The vote histogram proposes a dy; the explained-fraction veto decides.
+    // The proposal is used even when the histogram's own validity gates fail:
+    // animated content steals votes and can break the dominance gate on a
+    // perfectly genuine scroll — the veto is the reliable arbiter for both
+    // false positives AND weak-vote true positives.
+    // The veto is deliberately MASKLESS: chrome and whitespace drop out of the
+    // unshifted-changed denominator on their own. Passing a pixel mask would
+    // exclude stable whitespace and CONCENTRATE the evidence on periodic
+    // regions (stripes, tiled images), letting an alias dy that explains only
+    // those regions pass — measured on the revisit back-navigation, where a
+    // masked veto accepted an alias and hid the page change entirely.
+    if (!confined) {
+        ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
+        for (int dy : s.proposals)
+            if (scroll_explains(prev_gray, curr_gray, dy, dynamic_mask))
+                return {TransitionType::Scroll, dy};
+    }
+
+    // No scroll explains the change. A PAGE CHANGE is a change SPREAD over the
+    // viewport: count the horizontal bands that changed significantly. Spread
+    // needs no chrome mask — shared chrome merely leaves its bands unchanged —
+    // so it also works on sessions that never scrolled (where the online
+    // chrome estimate cannot learn). A concentrated change (cookie banner,
+    // animation, popup) touches few bands and stays Unstable under Normal.
+    if (!ignore.empty())          // chrome + noise carry no page-change signal
+        changed.setTo(0, ignore);
+
+    int changed_bands = 0, bands = 0;
+    for (int y = 0; y + RESIDUAL_BAND_H <= changed.rows; y += RESIDUAL_BAND_H) {
+        const cv::Rect band(0, y, changed.cols, RESIDUAL_BAND_H);
+        double area = static_cast<double>(band.area());
+        if (!ignore.empty()) area -= cv::countNonZero(ignore(band));
+        if (area < 1000) continue;                 // band is (almost) all chrome
+        ++bands;
+        if (cv::countNonZero(changed(band)) / area > BAND_CHANGED_MIN_FRAC)
+            ++changed_bands;
+    }
+    if (bands == 0) return {TransitionType::Unstable, 0};
+
+    const double threshold = sensitivity_ == Sensitivity::High
+                                 ? PAGE_CHANGE_HIGH_SPREAD
+                                 : PAGE_CHANGE_MIN_SPREAD;
+    const double spread = static_cast<double>(changed_bands) / bands;
+    return {spread > threshold ? TransitionType::PageChange
+                               : TransitionType::Unstable, 0};
+}
