@@ -186,6 +186,23 @@ control which does nothing keeps producing change -- focus rings, hover states -
 so "nothing changed" never fires. "Nothing NEW appeared" does, and a run of it is
 an agent going in circles.
 
+## Does it help?
+
+Measured on a task where the agent intermittently locks onto a coordinate that
+does nothing and clicks it until the turn cap, 8 runs per arm:
+
+| guard | passed | median actions | worst loop |
+|---|---:|---:|---:|
+| off | 5/8 | 50 | 86 |
+| **on** | **8/8** | **5** | **2** |
+
+The guard stops a chain after three consecutive actions that introduce no
+content the screen has not already shown, and hands the model a screenshot
+saying so. It fired 3 times in 8 runs -- only when the pathology appeared.
+
+A plain "nothing changed" test catches none of this: those clicks *do* change
+pixels (focus rings, hover states), they just never produce anything new.
+
 ## Status
 
 Working software, not a finished result. The perception layer is inherited and
