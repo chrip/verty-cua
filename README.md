@@ -200,8 +200,26 @@ The guard stops a chain after three consecutive actions that introduce no
 content the screen has not already shown, and hands the model a screenshot
 saying so. It fired 3 times in 8 runs -- only when the pathology appeared.
 
-A plain "nothing changed" test catches none of this: those clicks *do* change
-pixels (focus rings, hover states), they just never produce anything new.
+**On a different task the same guard fires constantly and does not help.**
+Measured on a form-filling task, runs that hit the 50-turn cap did so *with* the
+guard enabled and firing 41-49 times: in one, the model was told 49 times that it
+was making no progress and clicked the identical dead coordinate 50 times.
+
+So the two halves separate cleanly, and only one of them generalises:
+
+| | evidence |
+|---|---|
+| **detection** works | fires on the pathology, and only on it, across both tasks |
+| **recovery** is task-dependent | 8/8 on one task; no effect on another |
+
+Telling a model it is stuck is not the same as it becoming unstuck. A stop that
+aborts the chain and *changes what happens next* -- rather than adding text to a
+context the model is already ignoring -- is the open problem.
+
+A plain "nothing changed" test catches none of this. Those clicks *do* change
+pixels (focus rings, hover states) and in the cycling case they genuinely
+succeed -- 47 of 50 verdicts were `expected` while the agent toggled between five
+states it had already visited. Only "nothing NEW appeared" sees it.
 
 ## Status
 
