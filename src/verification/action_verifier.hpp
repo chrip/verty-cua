@@ -82,6 +82,13 @@ struct VerifierConfig {
     // it, and arrow-key navigation moves a highlight down that list.
     int    key_focus_radius = 260;
 
+    // Share of changed pixels lying outside the action's neighbourhood before
+    // the change is called unattributable. Half is deliberately permissive: a
+    // click that opens a centred dialog legitimately puts most of its change
+    // away from the pointer, so this is a signal to report alongside the
+    // verdict, never one to fail an action on.
+    double external_away_frac = 0.50;
+
     // A changed pixel touching the click is necessary but NOT sufficient. A
     // document edit lights up the text caret AND the dirty-marker in the tab
     // title AND the window title AND the Save and Undo buttons -- seven

@@ -29,3 +29,6 @@ review/
 changemaps/
 m4/
 *.log
+
+# experiment indices point at run ids in a local demo checkout
+p0/

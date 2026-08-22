@@ -166,6 +166,26 @@ consecutive crops *is* the difference of those offsets. It exists because
 recorded corpora rarely contain scrolling, and a sign error in the scroll path
 would look exactly like a real finding.
 
+## What it detects
+
+Three signals, each validated against ground truth rather than judgement:
+
+| signal | question it answers | how it was validated |
+|---|---|---|
+| **verdict** | did the action do what it should have? | a hand-labelled corpus |
+| **novel / revisit** | is this content new, or a state the screen has shown before? | a task where the agent loops on a dead coordinate |
+| **external_change** | did something change that the action did not cause? | a lab that logs its own interruptions |
+
+The third matters more than it looks. Screens change for reasons the agent did
+not cause -- collaborative edits, notifications, late renders -- and a verifier
+that reads any post-action change as evidence about the action will be
+confidently wrong exactly there.
+
+The second turned out to be the most useful in practice. An agent that clicks a
+control which does nothing keeps producing change -- focus rings, hover states --
+so "nothing changed" never fires. "Nothing NEW appeared" does, and a run of it is
+an agent going in circles.
+
 ## Status
 
 Working software, not a finished result. The perception layer is inherited and
@@ -177,7 +197,13 @@ on your own data before being trusted in anger.
 Known gaps: reflow (a container resizing and re-laying out its contents) has no
 model and lands in the residual bucket; `changed_frac` is amplitude-blind, so a
 faint wash over a large area scores like a sharp local edit; drag verification
-needs object identity that geometry does not carry.
+needs object identity that geometry does not carry; and whole-screen navigation
+is not separable from a wrong navigation by geometry at all.
+
+The `labs/` in the companion Qwen-CUA fork include two built for measurement
+rather than for the agent: one whose targets move while a plan executes, and one
+that changes on its own timer and logs when it did -- the second is what makes
+`external_change` scoreable instead of merely plausible.
 
 ## Relationship to upstream
 

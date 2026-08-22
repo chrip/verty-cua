@@ -205,10 +205,23 @@ std::string handle_transition(Server& srv, const std::map<std::string, std::stri
     // happened" is two facts and the verdict can only carry one. For a GUI test
     // agent the second is often the interesting one: an overlay, a notification,
     // or another session editing the same document.
+    // Ask whether change exists AWAY from the action, not whether the NEAREST
+    // change is far from it.
+    //
+    // The first version gated on dist_to_change > click_far_px, which is blind
+    // to the only case that matters. When an agent clicks a control and
+    // something unrelated updates elsewhere in the same window, the nearest
+    // change is the control the agent just touched: dist_to_change is 0 on
+    // interrupted and uninterrupted steps alike. Measured against a lab that
+    // logs its own interruptions, that rule fired on 0 of 2 interrupted steps.
+    //
+    // The share of change lying outside the action's neighbourhood does
+    // separate them cleanly -- 63-70% beyond 400px on the interrupted steps,
+    // 0% on the clean ones -- and it was already being computed.
+    const double away = loc.valid ? 1.0 - loc.frac_within_r : 1.0;
     const bool external =
-        d.changed_frac > 0.0
-        && ((action.has_coord && loc.valid
-             && loc.dist_to_change > srv.cfg.click_far_px)
+        d.changed_frac > 1e-4
+        && ((action.has_coord && loc.valid && away >= srv.cfg.external_away_frac)
             || (!action.has_coord && !ctx.has_focus
                 && action.kind != ActionKind::Type && action.kind != ActionKind::Key
                 && d.changed_frac > 1e-3));
