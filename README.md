@@ -1,18 +1,15 @@
 # Verty-CUA
 
-**Efficient visual state tracking for computer-use agents.**
+**Cheap, model-independent visual observability for GUI-agent trajectories.**
 
 A fork of [Verty](https://github.com/chrip/verty), which reconstructs scrolling
-pages from screen recordings. Verty-CUA reuses that perception engine for a
-different question:
+pages from screen recordings. Verty-CUA reuses that perception engine to watch
+what a computer-use agent is actually doing, from pixels alone — no model, no
+GPU, ~9 ms per action.
 
-> After a computer-use agent takes an action, can a cheap visual check decide
-> whether the resulting screen is consistent with the expected outcome — and so
-> avoid an expensive VLM turn?
-
-Today's CUA agents send a screenshot through a multimodal model after every
-action. That round trip dominates latency and cost, and much of it is spent
-confirming something entirely predictable happened — or that nothing happened.
+A benchmark harness tells you one thing at the end of a run: did the task
+succeed. It does not tell you *when* the run became unrecoverable, or why. This
+does, while the run is still going.
 
 ```
         agent
@@ -21,150 +18,42 @@ confirming something entirely predictable happened — or that nothing happened.
           │
           ▼
    ┌─────────────┐
-   │  Verty-CUA  │   visual state check, no model   (~9 ms, CPU)
+   │  Verty-CUA  │  transition · history · interference
    └──────┬──────┘
           │
- ┌────────┴────────┐
-expected      unknown / unexpected
-    │                 │
-    ▼                 ▼
- continue          VLM turn
+   ┌──────┴────────────────────────┐
+   │              │                │
+ verdict     new or revisited   change the
+                 state          agent didn't cause
 ```
 
-The goal is not a better VLM. It is fewer and cheaper VLM turns at the same task
-success rate.
+## The headline
 
-## What it does
+Measured over 50 recorded trajectories (35 successful, 15 failed):
 
-**Measures one frame pair cheaply.** How much changed, where, in how many
-disjoint pieces, whether a scroll explains it, and — from a per-block history of
-the session — whether each changed block is showing something *new* or returning
-to an appearance it has held before.
+| | |
+|---|---|
+| failures detected | **13 / 15** |
+| false alarms on healthy runs | **0 / 33** |
+| median warning before the run ended | **33 actions** |
+| median wall-clock recoverable per failed run | **11.8 min of 13.4 — 88 %** |
 
-**Judges the change against the action.** A click should change something near
-the pointer; typing should change a text region; a scroll should move the
-document by roughly the requested amount. Where the evidence is unambiguous the
-verdict is `Expected`; where it contradicts the action, `Unexpected`; otherwise
-`Unknown`.
+The signal that does this is **not** action verification. It is the block-level
+history: *has the screen returned to a state it has already shown?* In the
+clearest case, 47 of 50 actions genuinely succeeded — every per-action verdict
+was `expected` — while the agent cycled forever between five states it had
+already visited. No per-action check and no "nothing changed" test sees that.
 
-**`Unknown` is the safe default, by design.** A wrong `Expected` makes an agent
-proceed on a false premise and fail silently. A wrong `Unknown` costs one VLM
-call. The rules only claim `Expected` on unambiguous evidence.
-
-**Never attributes change without positive evidence.** Screens change for
-reasons the agent did not cause — collaborative edits from another session,
-notifications, overlays, late renders. Post-action change does *not* imply
-change caused by the action, and the verifier is built around that.
-
-## Layout
+Detection does not require the agent's cooperation. `QWEN_CUA_VERTY_ABORT_RUN=10`
+ends a looping run on visual evidence alone:
 
 ```
-src/
-  perception/     the Verty engine, unchanged — block matching, scroll
-                  detection, fixed/dynamic regions, subframes, stitching
-  offline/        the original video → stitched page pipeline   → `verty`
-  live/           one frame pair measured cheaply; per-block history;
-                  session state carried across steps
-  verification/   action + delta → Expected | Unexpected | Unknown
-  adapters/       normalized trajectory manifest reader
-  tools/          verty_replay.cpp                              → `verty-replay`
-                  verty_serve.cpp                               → `verty-serve`
-adapters/         Python normalizers, one per trajectory source
-benchmarks/       screenspot/ — GUI grounding harness
-scripts/          regression, self-tests, scoring, experiment drivers
-test_data/        regression corpus for the perception layer (not in git)
+Run aborted: 10 consecutive actions produced no content that had not
+             already been on screen.
 ```
 
-Perception is treated as a library with a regression suite, not as code to
-rewrite. Every change to it must leave `test_data/` reports byte-identical
-unless the change is deliberately about those numbers.
-
-## Build
-
-Requires OpenCV 4 and a C++20 compiler.
-
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
-
-Produces `build/verty` (offline stitching, unchanged from upstream),
-`build/verty-replay` (offline trajectory analysis) and `build/verty-serve`
-(the live check).
-
-## Analyze recorded trajectories
-
-```bash
-# Normalize a source into manifests. One adapter per source; both write the
-# same TSV schema.
-python3 adapters/mcp_bridge.py    ../mcp-desktop-bridge/trajectories -o trajectories
-python3 adapters/qwen_cua_demo.py ../Qwen-CUA/demo/data/runs        -o trajectories
-
-# Measure every step, and run the expectation model over it.
-./build/verty-replay $(find trajectories -name manifest.tsv | sort) \
-    -o run.jsonl --verify --change-maps changemaps
-
-python3 analyze_m0.py run.jsonl
-
-# Render before/after/diff sheets so verdicts can be judged by eye. The change
-# map is coloured by history: green = never seen before, red = an earlier
-# appearance returned.
-python3 review_sheet.py run.jsonl -o review/
-```
-
-### Validating the rules
-
-Sheets are sorted by hand into `review/{expected,unexpected,unknown}/` according
-to what the verdict *should* have been. That labels the truth rather than
-agreeing with a suggestion, which is what makes it possible to see both kinds of
-error: a false `Expected` (a silent failure) and an over-cautious `Unknown` (a
-VLM call that could have been saved).
-
-```bash
-python3 scripts/export_labels.py review/ -o labels.json   # freeze the truth
-python3 scripts/score.py run.jsonl labels.json            # confusion matrix
-python3 scripts/score.py new.jsonl labels.json --diff run.jsonl
-```
-
-Freezing labels by *step identity* rather than by predicted verdict is what
-turns a rule change from an argument into a measurement: `--diff` shows exactly
-which steps moved and whether each move was right.
-
-## Live service
-
-```bash
-build/verty-serve -p 4505
-
-POST /transition?session=ID&before=PATH&after=PATH&action=KIND[&x=&y=&dy=&text=]
-POST /session/reset?session=ID
-GET  /health
-```
-
-Frames are passed as **paths**, not bodies: this is a loopback service running
-beside the agent, the screenshots are already on disk, and paths keep the wire
-format simple enough to need no JSON parser. The socket binds `INADDR_LOOPBACK`
-explicitly — **it reads any file it is given and must never be exposed
-off-host.**
-
-Sessions carry the block history, the last focus point, and a count of
-consecutive steps that introduced no new content.
-
-Responses carry `external_change` alongside the verdict rather than inside it:
-"the action did nothing *and* something unrelated arrived" is two facts, and for
-GUI testing the second is often the interesting one.
-
-## Checks
-
-```bash
-scripts/regression.sh                 # perception vs a reference build, byte-identical
-python3 scripts/scroll_selftest.py    # scroll verification against exact ground truth
-```
-
-The scroll self-test builds its own ground truth: it crops viewport-sized
-windows out of a stitched page at known offsets, so the scroll between
-consecutive crops *is* the difference of those offsets. It exists because
-recorded corpora rarely contain scrolling, and a sign error in the scroll path
-would look exactly like a real finding.
+Live, that turned a failure that previously cost 50 turns and ~800 s into one
+costing 17 turns and 88 s, with a diagnosis attached.
 
 ## What it detects
 
@@ -186,40 +75,21 @@ control which does nothing keeps producing change -- focus rings, hover states -
 so "nothing changed" never fires. "Nothing NEW appeared" does, and a run of it is
 an agent going in circles.
 
-## Does it help?
+## What it does not do
 
-Measured on a task where the agent intermittently locks onto a coordinate that
-does nothing and clicks it until the turn cap, 8 runs per arm:
+**It does not make an agent faster or more reliable.** Two applications were
+tested and largely failed, and they are recorded because the negative results
+are load-bearing:
 
-| guard | passed | median actions | worst loop |
-|---|---:|---:|---:|
-| off | 5/8 | 50 | 86 |
-| **on** | **8/8** | **5** | **2** |
+- **Fewer model calls** — structurally impossible where one turn is one call and
+  the model emits one action per turn (0 of 536 turns produced a usable plan).
+- **Recovering a stuck agent by telling it** — detection works on every task
+  tried; recovery does not. In one run the model was told 49 times that it was
+  making no progress and clicked the same dead coordinate 50 times.
 
-The guard stops a chain after three consecutive actions that introduce no
-content the screen has not already shown, and hands the model a screenshot
-saying so. It fired 3 times in 8 runs -- only when the pathology appeared.
-
-**On a different task the same guard fires constantly and does not help.**
-Measured on a form-filling task, runs that hit the 50-turn cap did so *with* the
-guard enabled and firing 41-49 times: in one, the model was told 49 times that it
-was making no progress and clicked the identical dead coordinate 50 times.
-
-So the two halves separate cleanly, and only one of them generalises:
-
-| | evidence |
-|---|---|
-| **detection** works | fires on the pathology, and only on it, across both tasks |
-| **recovery** is task-dependent | 8/8 on one task; no effect on another |
-
-Telling a model it is stuck is not the same as it becoming unstuck. A stop that
-aborts the chain and *changes what happens next* -- rather than adding text to a
-context the model is already ignoring -- is the open problem.
-
-A plain "nothing changed" test catches none of this. Those clicks *do* change
-pixels (focus rings, hover states) and in the cycling case they genuinely
-succeed -- 47 of 50 verdicts were `expected` while the agent toggled between five
-states it had already visited. Only "nothing NEW appeared" sees it.
+Folding verified frames out of the visual history does cut prompt tokens ~33 %
+per turn, but takes more turns doing it, and the effect is worth little if you
+run the model on your own hardware.
 
 ## Status
 
