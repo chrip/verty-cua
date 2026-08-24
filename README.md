@@ -184,6 +184,19 @@ off-host.**
 Sessions carry the block history, the last focus point, and a count of
 consecutive steps that introduced no new content.
 
+Runtime switches, all off by default so the agent behaves exactly as it did
+without them:
+
+| variable | effect |
+|---|---|
+| `QWEN_CUA_VERTY_URL` | enables the layer at all |
+| `QWEN_CUA_VERTY_GUARD` | stop an action chain and tell the model it is stuck |
+| `QWEN_CUA_VERTY_ABORT_RUN=10` | **end the run** on a visual state loop, without asking the model |
+| `QWEN_CUA_VERTY_FOLD` / `_FOLD_KEEP` | fold verified frames to text in later turns |
+
+`ABORT_RUN` is the one that pays. The guard asks the model to change course and
+it may decline; the abort does not need its agreement.
+
 Responses carry `external_change` alongside the verdict rather than inside it:
 "the action did nothing *and* something unrelated arrived" is two facts, and for
 GUI testing the second is often the interesting one.
