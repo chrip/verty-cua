@@ -161,10 +161,31 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // those regions pass — measured on the revisit back-navigation, where a
     // masked veto accepted an alias and hid the page change entirely.
     if (!confined) {
+        if (has_pred_) {
+            // Only the window's dominant peak, and only when the histogram's own
+            // validity gates pass. The full search may hand the veto weak
+            // proposals because it saw every offset; the window did not, and a
+            // narrowed candidate set must not let an alias through that the
+            // full search would never have proposed. Measured on rw6, where a
+            // fading cart overlay passed the veto at a windowed proposal and
+            // merged two pages: that is what these gates and the reset below
+            // are for.
+            ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask,
+                                            pred_dy_ - PREDICT_RADIUS,
+                                            pred_dy_ + PREDICT_RADIUS);
+            if (s.valid && !s.proposals.empty() && s.proposals.front() == s.dy
+                && scroll_explains(prev_gray, curr_gray, s.dy, dynamic_mask)) {
+                pred_dy_ = s.dy;
+                return {TransitionType::Scroll, s.dy};
+            }
+        }
         ScrollResult s = scroll_.detect(prev_gray, curr_gray, fixed_mask);
         for (int dy : s.proposals)
-            if (scroll_explains(prev_gray, curr_gray, dy, dynamic_mask))
+            if (scroll_explains(prev_gray, curr_gray, dy, dynamic_mask)) {
+                has_pred_ = true;
+                pred_dy_  = dy;
                 return {TransitionType::Scroll, dy};
+            }
     }
 
     // No scroll explains the change. A PAGE CHANGE is a change SPREAD over the
@@ -173,6 +194,9 @@ Transition TransitionClassifier::classify(const cv::Mat& prev_gray,
     // so it also works on sessions that never scrolled (where the online
     // chrome estimate cannot learn). A concentrated change (cookie banner,
     // animation, popup) touches few bands and stays Unstable under Normal.
+    // A change no scroll explains ends the motion the predictor was following.
+    has_pred_ = false;
+
     if (!ignore.empty())          // chrome + noise carry no page-change signal
         changed.setTo(0, ignore);
 

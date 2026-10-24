@@ -9,15 +9,16 @@
 // We skip dy=0 here so that static blocks (headers/footers) don't dominate.
 std::pair<int, float> ScrollDetector::best_dy(const cv::Mat& prev_gray,
                                                const cv::Mat& curr_gray,
-                                               int px, int py) const
+                                               int px, int py,
+                                               int dy_lo, int dy_hi) const
 {
     auto b = extract_block(curr_gray, px, py);
     if (b.empty()) return {0, std::numeric_limits<float>::max()};
 
-    int   best_dy_val = 0;
-    float best_mad    = std::numeric_limits<float>::max();
+    int      best_dy_val = 0;
+    unsigned best_sad    = std::numeric_limits<unsigned>::max();
 
-    for (int dy = -MAX_SCROLL; dy <= MAX_SCROLL; dy += SCROLL_STEP) {
+    for (int dy = dy_lo; dy <= dy_hi; dy += SCROLL_STEP) {
         if (dy == 0) continue;  // skip STATIC; we want the scroll component
         // Same bounds rule as extract_block, but without building a Mat header
         // per candidate offset (see patch_mad_at). Only the row range varies:
@@ -25,20 +26,26 @@ std::pair<int, float> ScrollDetector::best_dy(const cv::Mat& prev_gray,
         // `b` was extracted at px from a same-sized frame.
         const int ay = py + dy;
         if (ay < 0 || ay + BLOCK_SIZE > prev_gray.rows) continue;
-        float mad = patch_mad_at(prev_gray, px, ay, b);
-        if (mad < best_mad) {
-            best_mad    = mad;
+        const unsigned sad = patch_sad_at_bounded(prev_gray, px, ay, b, best_sad);
+        if (sad < best_sad) {
+            best_sad    = sad;
             best_dy_val = dy;
         }
     }
-    return {best_dy_val, best_mad};
+    if (best_sad == std::numeric_limits<unsigned>::max())
+        return {0, std::numeric_limits<float>::max()};
+    return {best_dy_val, static_cast<float>(best_sad) / (BLOCK_SIZE * BLOCK_SIZE)};
 }
 
 // ── detect ────────────────────────────────────────────────────────────────────
 ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
                                     const cv::Mat& curr_gray,
-                                    const cv::Mat& fixed_mask)
+                                    const cv::Mat& fixed_mask,
+                                    int dy_lo, int dy_hi)
 {
+    dy_lo = std::max(dy_lo, -MAX_SCROLL);
+    dy_hi = std::min(dy_hi, MAX_SCROLL);
+    const bool windowed = dy_lo > -MAX_SCROLL || dy_hi < MAX_SCROLL;
     const int cols = curr_gray.cols;
     const int rows = curr_gray.rows;
 
@@ -90,7 +97,7 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
         }
         ++collected;
 
-        auto [dy, mad] = best_dy(prev_gray, curr_gray, px, py);
+        auto [dy, mad] = best_dy(prev_gray, curr_gray, px, py, dy_lo, dy_hi);
         if (mad < SAD_THRESHOLD) {
             // Round to nearest pixel for the histogram key
             hist[dy]++;
@@ -122,7 +129,10 @@ ScrollResult ScrollDetector::detect(const cv::Mat& prev_gray,
               [](const auto& a, const auto& b) { return a.second > b.second; });
     for (const auto& [dy, votes] : bins) {
         if (static_cast<int>(res.proposals.size()) >= SCROLL_PROPOSALS) break;
-        if (dy != 0) res.proposals.push_back(dy);
+        if (dy == 0) continue;
+        if (windowed && ((dy == dy_lo && dy_lo > -MAX_SCROLL)
+                         || (dy == dy_hi && dy_hi < MAX_SCROLL))) continue;
+        res.proposals.push_back(dy);
     }
 
     // Two-part validity gate:

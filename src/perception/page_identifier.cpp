@@ -35,14 +35,17 @@ Identification PageIdentifier::match(const cv::Mat& frame_gray,
         ++usable;
 
         // Best vertical match of this block in its own canvas column.
-        long  best_y   = -1;
-        float best_mad = std::numeric_limits<float>::max();
+        long     best_y   = -1;
+        unsigned best_sad = std::numeric_limits<unsigned>::max();
         for (int cy = 0; cy + BLOCK_SIZE <= canvas_gray.rows; ++cy) {
             // No Mat header per candidate row — this loop runs once per canvas
-            // row per sampled block and is the identifier's whole cost.
-            const float mad = patch_mad_at(canvas_gray, px, cy, block);
-            if (mad < best_mad) { best_mad = mad; best_y = cy; }
+            // row per sampled block and is the identifier's whole cost. The
+            // bounded sum gives up on a row as soon as it cannot win.
+            const unsigned sad = patch_sad_at_bounded(canvas_gray, px, cy, block, best_sad);
+            if (sad < best_sad) { best_sad = sad; best_y = cy; }
         }
+        const float best_mad = best_y < 0 ? std::numeric_limits<float>::max()
+                                          : static_cast<float>(best_sad) / (BLOCK_SIZE * BLOCK_SIZE);
         // Vote only on NEAR-IDENTICAL matches (not merely similar): a weak
         // match lands at whatever offset minimises MAD, scattering votes and
         // masking the true peak's concentration. The tight bar keeps the vote

@@ -88,7 +88,9 @@ MULTIPAGE_TOLERANCE = {
     "statesPx": 2,           # settled states vs taps: a tap can read as a duplicate
     # Inner document extent. Dead reckoning inside a subframe drifts like it does
     # in a document, over more steps and with less content to correct against:
-    # measured 2433px against 2495 on the inner-scroll fixture (2.5% of 335 steps).
+    # measured 2433px against 2495 on the inner-scroll fixture (2.5% of 335 steps)
+    # until the scroll search tried the previous dy's neighbourhood first; 2495
+    # since. The tolerance stays: one fixture is not a drift model.
     "innerExtentPx": 150,
     "vtStartPx": 32,         # revisit entry offset vs ground truth
 }

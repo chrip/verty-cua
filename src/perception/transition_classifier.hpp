@@ -77,6 +77,19 @@ private:
     Sensitivity    sensitivity_;
     ScrollDetector scroll_;
 
+    // The last scroll this classifier accepted, while scrolling continues.
+    // Scrolling is smooth far more often than not, so the next transition's dy
+    // is usually within a few pixels of it: searching that window first is the
+    // motion-vector predictor of a video encoder, and the full ±MAX_SCROLL
+    // search runs only when the window yields nothing. A wrong prediction costs
+    // one cheap windowed vote. It is NOT verdict-neutral by construction -- the
+    // window can surface a dy the full search would not have proposed -- so the
+    // windowed answer must clear stricter gates than the full search's (see
+    // classify), and the prediction is dropped at any change no scroll explains.
+    bool has_pred_ = false;
+    int  pred_dy_  = 0;
+    static constexpr int PREDICT_RADIUS = 24;
+
     // True iff shifting prev by dy leaves at most SCROLL_RESIDUAL_MAX of the
     // (non-ignored, overlapping) area changed — i.e. the dy explains the frame.
     [[nodiscard]] static bool scroll_explains(const cv::Mat& prev_gray,

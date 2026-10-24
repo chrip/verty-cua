@@ -131,7 +131,7 @@ run the model on your own hardware.
 
 ```
 src/
-  perception/     the Verty engine, unchanged — block matching, scroll
+  perception/     the Verty engine — block matching, scroll
                   detection, fixed/dynamic regions, subframes, stitching
   offline/        the original video → stitched page pipeline   → `verty`
   live/           one frame pair measured cheaply; per-block history;

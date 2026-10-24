@@ -603,6 +603,31 @@ inline float patch_mad_at(const cv::Mat& img, int x, int y, const cv::Mat& patch
     return static_cast<float>(acc) / static_cast<float>(patch.rows * patch.cols);
 }
 
+// The sum of absolute differences of the same window, abandoned as soon as the
+// running sum reaches `bound`; the result is then some value >= bound.
+//
+// Every block-matching encoder does this: a search loop only needs to know
+// whether a candidate beats the best so far, and most candidates are beaten
+// within a few rows. Because a hot loop keeps the FIRST minimum (`<`, not
+// `<=`), abandoning a candidate whose partial sum already reaches the best
+// cannot change which offset wins -- the argmin and its value are the same
+// integers the full sum gives, so callers stay bit-identical.
+inline unsigned patch_sad_at_bounded(const cv::Mat& img, int x, int y,
+                                     const cv::Mat& patch, unsigned bound) {
+    CV_DbgAssert(img.type() == CV_8UC1 && patch.type() == CV_8UC1
+                 && x >= 0 && y >= 0
+                 && x + patch.cols <= img.cols && y + patch.rows <= img.rows);
+    unsigned acc = 0;
+    for (int r = 0; r < patch.rows; ++r) {
+        const uint8_t* ri = img.ptr<uint8_t>(y + r) + x;
+        const uint8_t* rp = patch.ptr<uint8_t>(r);
+        for (int c = 0; c < patch.cols; ++c)
+            acc += static_cast<unsigned>(std::abs(static_cast<int>(ri[c]) - static_cast<int>(rp[c])));
+        if (acc >= bound) return acc;
+    }
+    return acc;
+}
+
 // Extract a BLOCK_SIZE×BLOCK_SIZE gray patch from a frame (bounds-checked).
 // Returns an empty Mat if out of bounds.
 inline cv::Mat extract_block(const cv::Mat& gray, int px, int py) {

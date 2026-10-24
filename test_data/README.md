@@ -270,7 +270,7 @@ Two things must hold, and both are asserted:
 |---|---|---|
 | `page0.height` | 1457 | the document is only what the OUTER scroll covered — it must not grow because something inside it scrolled |
 | `innerDocCount` | 1 | one inner document, not one per pause |
-| `innerDocExtent` | 2433 of 2495 | the stitch from a 209px window, 2.5% short over 335 dead-reckoned steps |
+| `innerDocExtent` | 2495 of 2495 | the stitch from a 209px window over 335 dead-reckoned steps (2433 before the scroll search tried the previous dy's neighbourhood first) |
 
 The three gallery plans together are the decision tree in one page: `gallery`
 settles into states (screen flow), `gallery_video` never settles (noise),
