@@ -2,6 +2,7 @@
 #include <opencv2/core.hpp>
 
 #include "live/region_history.hpp"
+#include "verification/action.hpp"
 
 // ── What carries across steps ────────────────────────────────────────────────
 // M0 and M1 deliberately treated every frame pair as independent, so their
@@ -31,11 +32,32 @@ struct SessionState {
 
     int steps = 0;
 
+    // An open press: where the button went down, and the screen as it was
+    // before it did. A hand-rolled drag is judged against that frame when the
+    // button comes up (see drag_gesture.hpp).
+    bool      has_press = false;
+    cv::Point press;
+    cv::Mat   press_frame;
+
     // Called after each step is measured.
     void advance(bool had_coord, cv::Point coord, int novel_blocks)
     {
         if (had_coord) { focus = coord; has_focus = true; }
         no_novel_run = (novel_blocks == 0) ? no_novel_run + 1 : 0;
         ++steps;
+    }
+
+    // Called with each step's action and its `before` frame, after the step is
+    // measured.
+    void note_press(const Action& a, const cv::Mat& before)
+    {
+        if (a.kind == ActionKind::MouseDown && a.has_coord) {
+            has_press = true;
+            press = a.coord;
+            press_frame = before.clone();
+        } else if (a.kind == ActionKind::MouseUp) {
+            has_press = false;
+            press_frame.release();
+        }
     }
 };

@@ -49,6 +49,8 @@ target_compile_options(verty_offline PRIVATE ${VERTY_WARNINGS})
 add_library(verty_cua STATIC
     src/live/visual_delta.cpp
     src/live/region_history.cpp
+    src/live/block_motion.cpp
+    src/live/drag_gesture.cpp
     src/verification/action.cpp
     src/verification/action_verifier.cpp
     src/adapters/trajectory.cpp

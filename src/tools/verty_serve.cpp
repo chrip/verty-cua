@@ -36,6 +36,7 @@
 
 #include <opencv2/opencv.hpp>
 
+#include "live/drag_gesture.hpp"
 #include "live/session.hpp"
 #include "live/visual_delta.hpp"
 #include "perception/transition_classifier.hpp"
@@ -193,7 +194,12 @@ std::string handle_transition(Server& srv, const std::map<std::string, std::stri
         ctx.focus_locality = measure_locality(before, after, S.focus,
                                               srv.cfg.key_focus_radius, d);
 
+    // Only drags pay for the motion field; every other step returns at once.
+    const DragGesture drag = measure_drag(S, action, before, after);
+    ctx.drag = &drag;
+
     const VerificationResult vr = verify_action(action, d, loc, srv.cfg, ctx);
+    S.note_press(action, before);
     S.advance(action.has_coord, action.coord, rc.novel_blocks);
 
     const double ms = std::chrono::duration<double, std::milli>(

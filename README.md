@@ -75,6 +75,42 @@ control which does nothing keeps producing change -- focus rings, hover states -
 so "nothing changed" never fires. "Nothing NEW appeared" does, and a run of it is
 an agent going in circles.
 
+### Where changed pixels came from
+
+A change mask says where the screen changed, not whether the new pixels are
+new. A dragged card, a list closing up behind it and a pane scrolling its own
+content all look like freshly drawn content to it. `live/block_motion` answers
+the question the way screen encoders do: AV1 and AV2 hash every block at every
+pixel position of the reference frame and look blocks up instead of searching
+for them, because screen content moves by whole pixels and is copied exactly.
+The CUA frames are lossless PNGs, which is the case those tools were built for.
+
+Each changed, textured 16px block of the new frame is classed as *moved* (an
+exact copy exists elsewhere in the old frame), *new* (it exists nowhere) or
+*ambiguous* (too many copies to place). Moved blocks that share a vector and
+sit together form a cluster: one object, with where it was and where it is now.
+That costs one rolling-hash pass over the frame, ~4 ms at 1280x900.
+
+Measured on the recorded trajectories: in drag steps, 80 % of changed blocks
+are exact copies of pixels from elsewhere in the previous frame. In click steps
+it is 5 %.
+
+That is the object identity drag verification was missing. A drag is
+`expected` when the pixels under its start moved to its end. For a hand-rolled
+`mouse_down … mouse_up`, the app paints the held card's slot faded, so the
+gesture is measured from the frame before the press: a second reference frame,
+as encoders keep. Against the labels this moved 4 steps, all correctly:
+precision stayed 100 % and recall went from 77.3 % to 79.5 %. On 71 unlabelled
+trajectories it produced 19 new `expected` drag verdicts, and all 19 were
+correct when checked by eye. All of them come from one Kanban lab, so this is
+not evidence that the rule generalises.
+
+A negative result belongs here too. Not counting moved blocks as novel did not
+change the stuck detector on the 53 instrumented runs at any threshold from 6
+to 12: same catches, same false alarms, same lead. 12.7 % of novel blocks are
+moved content, but none of them sit in the streaks that decide the alarm. That
+counter stays as it was.
+
 ## What it does not do
 
 **It does not make an agent faster or more reliable.** Two applications were
@@ -99,6 +135,7 @@ src/
                   detection, fixed/dynamic regions, subframes, stitching
   offline/        the original video → stitched page pipeline   → `verty`
   live/           one frame pair measured cheaply; per-block history;
+                  block motion (moved vs new pixels, hash-based);
                   session state carried across steps
   verification/   action + delta → Expected | Unexpected | Unknown
   adapters/       normalized trajectory manifest reader
@@ -206,6 +243,7 @@ GUI testing the second is often the interesting one.
 ```bash
 scripts/regression.sh                 # perception vs a reference build, byte-identical
 python3 scripts/scroll_selftest.py    # scroll verification against exact ground truth
+python3 scripts/motion_selftest.py    # block motion + drag verdicts against exact ground truth
 
 python3 scripts/lead_time.py RUNS --stuck 10   # how early failures are detected,
                                                # and how often healthy runs trip it
@@ -219,6 +257,13 @@ consecutive crops *is* the difference of those offsets. It exists because
 recorded corpora rarely contain scrolling, and a sign error in the scroll path
 would look exactly like a real finding.
 
+The motion self-test builds its ground truth the same way. It cuts a textured
+rectangle out of a real page and pastes it elsewhere, so the motion vector *is*
+the difference of the two positions. Its cases cover a drag at an odd
+overlapping offset, a press/move/release drag with a faded source, a drop
+somewhere other than the release point, a drag that changed nothing, and an
+object that vanished.
+
 
 ## Status
 
@@ -231,8 +276,9 @@ on your own data before being trusted in anger.
 Known gaps: reflow (a container resizing and re-laying out its contents) has no
 model and lands in the residual bucket; `changed_frac` is amplitude-blind, so a
 faint wash over a large area scores like a sharp local edit; drag verification
-needs object identity that geometry does not carry; and whole-screen navigation
-is not separable from a wrong navigation by geometry at all.
+rests on exact pixel copies, so a card restyled on drop (hover tint, selection
+ring) reads as new content and falls back to `unknown`; and whole-screen
+navigation is not separable from a wrong navigation by geometry at all.
 
 The `labs/` in the companion Qwen-CUA fork include two built for measurement
 rather than for the agent: one whose targets move while a plan executes, and one

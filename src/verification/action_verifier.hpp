@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 
+#include "live/drag_gesture.hpp"
 #include "live/visual_delta.hpp"
 #include "verification/action.hpp"
 
@@ -43,6 +44,10 @@ struct VerifierContext {
     // Locality of this step's change measured at `focus` rather than at the
     // action's own coordinate. Only meaningful when has_focus is set.
     ChangeLocality focus_locality;
+
+    // A drag's start, end, and the block motion across it (drag_gesture.hpp).
+    // Null, or not valid, when the step is not a drag or its start is unknown.
+    const DragGesture* drag = nullptr;
 };
 
 // Thresholds. Every default here is measured on the M0 corpus
@@ -108,6 +113,17 @@ struct VerifierConfig {
     // realized amount differ from the request.
     double scroll_tolerance_frac = 0.5;
     int    scroll_tolerance_min_px = 40;
+
+    // A drag succeeded when the pixels that were under its start moved to its
+    // end. "Under" is measured against the moved blocks' rectangle, which covers
+    // only the TEXTURED blocks of the object: a grab on a card's flat padding
+    // sits outside it, hence the margin. The drop margin is wider because drop
+    // targets snap -- a Kanban card lands in the column's next slot, not at the
+    // release point (measured: 17px above the slot it landed in).
+    int    drag_grab_px = 24;
+    int    drag_drop_px = 64;
+    // A press and release closer than this is a click, not a drag.
+    int    drag_min_px = 8;
 };
 
 VerificationResult verify_action(const Action& action, const VisualDelta& delta,

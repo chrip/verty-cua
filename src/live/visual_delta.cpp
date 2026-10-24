@@ -18,10 +18,12 @@ constexpr int kLocalityWindow = 420;
 // wash. 60 of 255 is roughly the gap between a focus-dim and real content.
 constexpr int kStrongDiff = 60;
 
+}  // namespace
+
 // The changed mask, computed exactly as TransitionClassifier computes it
 // internally: absdiff -> 3x3 blur -> SAD_THRESHOLD. The blur is what keeps
 // single-pixel sensor noise and font antialiasing out of the mask.
-cv::Mat changed_mask(const cv::Mat& a, const cv::Mat& b)
+cv::Mat change_mask(const cv::Mat& a, const cv::Mat& b)
 {
     cv::Mat diff, smooth, changed;
     cv::absdiff(a, b, diff);
@@ -30,8 +32,6 @@ cv::Mat changed_mask(const cv::Mat& a, const cv::Mat& b)
     return changed;
 }
 
-}  // namespace
-
 VisualDelta measure_delta(const cv::Mat& before_gray, const cv::Mat& after_gray,
                           TransitionClassifier& classifier)
 {
@@ -39,7 +39,7 @@ VisualDelta measure_delta(const cv::Mat& before_gray, const cv::Mat& after_gray,
     d.frame_w = after_gray.cols;
     d.frame_h = after_gray.rows;
 
-    const cv::Mat changed = changed_mask(before_gray, after_gray);
+    const cv::Mat changed = change_mask(before_gray, after_gray);
     const double total = static_cast<double>(changed.total());
     const int n = cv::countNonZero(changed);
     d.changed_frac = n / total;
@@ -89,7 +89,7 @@ ChangeLocality measure_locality(const cv::Mat& before_gray, const cv::Mat& after
     if (d.changed_frac <= 0.0) return loc;   // nothing to be near
     loc.valid = true;
 
-    const cv::Mat changed = changed_mask(before_gray, after_gray);
+    const cv::Mat changed = change_mask(before_gray, after_gray);
     const int n = cv::countNonZero(changed);
     const cv::Rect frame(0, 0, changed.cols, changed.rows);
     const cv::Rect around =

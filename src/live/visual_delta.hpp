@@ -65,6 +65,9 @@ struct ChangeLocality {
     bool   inside_bbox = false;
 };
 
+// The System-0 changed mask: absdiff -> 3x3 blur -> SAD_THRESHOLD, CV_8U.
+cv::Mat change_mask(const cv::Mat& a, const cv::Mat& b);
+
 // Both frames must be single-channel and the same size.
 VisualDelta measure_delta(const cv::Mat& before_gray, const cv::Mat& after_gray,
                           TransitionClassifier& classifier);

@@ -251,6 +251,46 @@ VerificationResult verify_passive(ActionKind kind, ChangeExtent extent)
                 + " sent no input, but the screen changed on its own");
 }
 
+// Shared by `drag` and by the `mouse_up` that ends a hand-rolled gesture.
+// Returns false when the motion field has nothing to say, so the caller falls
+// back to its geometric rule.
+bool verify_drag_motion(const VerifierContext& ctx, const VerifierConfig& cfg,
+                        ChangeExtent extent, VerificationResult& out)
+{
+    if (!ctx.drag || !ctx.drag->valid) return false;
+    const DragGesture& g = *ctx.drag;
+    const cv::Point travel = g.end - g.start;
+    if (std::hypot(travel.x, travel.y) < cfg.drag_min_px) return false;   // a click
+
+    auto inflate = [](cv::Rect r, int m) { return cv::Rect(r.x - m, r.y - m, r.width + 2 * m, r.height + 2 * m); };
+    bool carried_elsewhere = false;
+    for (const MotionCluster& c : g.motion.clusters) {
+        if (c.mv == cv::Point(0, 0)) continue;
+        if (!inflate(c.src, cfg.drag_grab_px).contains(g.start)) continue;
+        if (inflate(c.dst, cfg.drag_drop_px).contains(g.end)) {
+            out = make(Verdict::Expected, extent,
+                       "the object under the drag start moved by (" + std::to_string(c.mv.x)
+                       + "," + std::to_string(c.mv.y) + ") to the drop point");
+            return true;
+        }
+        carried_elsewhere = true;
+    }
+    if (carried_elsewhere) {
+        out = make(Verdict::Unknown, extent,
+                   "the object under the drag start moved, but not to the drop point");
+        return true;
+    }
+    // Over the whole gesture no textured content moved or appeared: whatever
+    // changed went flat (or nothing changed at all), which no successful drop
+    // looks like. A drop that deletes -- onto a trash can -- still repaints its
+    // target, so it falls through to Unknown below.
+    if (g.motion.moved_blocks == 0 && g.motion.new_blocks == 0) {
+        out = make(Verdict::Unexpected, extent, "the drag neither moved nor drew any content");
+        return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 VerificationResult verify_action(const Action& action, const VisualDelta& delta,
@@ -275,14 +315,17 @@ VerificationResult verify_action(const Action& action, const VisualDelta& delta,
     case ActionKind::Scroll:
         return verify_scroll(action, delta, cfg, extent);
 
-    case ActionKind::Drag:
+    case ActionKind::Drag: {
         // A drag should displace something. Distinguishing a successful drop
-        // from a reverted one needs to know what was dragged, which geometry
-        // does not carry.
+        // from a reverted one needs to know what was dragged; the block motion
+        // field carries that where geometry does not.
+        VerificationResult r;
+        if (verify_drag_motion(ctx, cfg, extent, r)) return r;
         if (extent == ChangeExtent::None)
             return make(Verdict::Unexpected, extent, "drag moved nothing");
         return make(Verdict::Unknown, extent,
                     "drag outcomes need object identity, not just geometry");
+    }
 
     case ActionKind::MouseDown:
         // Pressing and holding gives at most a pressed-state or focus-ring
@@ -294,11 +337,15 @@ VerificationResult verify_action(const Action& action, const VisualDelta& delta,
         return make(Verdict::Unknown, extent,
                     "button press caused a substantial change");
 
-    case ActionKind::MouseUp:
+    case ActionKind::MouseUp: {
         // Release completes whatever the press began. Every outcome is
-        // legitimate, including none, so geometry carries no signal at all.
+        // legitimate, including none, so geometry carries no signal at all --
+        // unless the press and release were a drag, which motion can judge.
+        VerificationResult r;
+        if (verify_drag_motion(ctx, cfg, extent, r)) return r;
         return make(Verdict::Unknown, extent,
                     "button release outcomes need to know what the press started");
+    }
 
     case ActionKind::MouseMove:
     case ActionKind::Wait:

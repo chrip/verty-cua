@@ -24,6 +24,8 @@
 #include <opencv2/opencv.hpp>
 
 #include "adapters/trajectory.hpp"
+#include "live/block_motion.hpp"
+#include "live/drag_gesture.hpp"
 #include "live/region_history.hpp"
 #include "live/session.hpp"
 #include "live/visual_delta.hpp"
@@ -178,11 +180,14 @@ int main(int argc, char** argv)
 
             // Novel vs revisit, from the block history alone -- no model.
             RegionChangeSummary rc;
+            BlockMotion motion;
             {
                 cv::Mat diff, smooth, changed;
                 cv::absdiff(before, after, diff);
                 cv::blur(diff, smooth, cv::Size(3, 3));
                 cv::compare(smooth, SAD_THRESHOLD, changed, cv::CMP_GT);
+                // Where the changed pixels came from: moved, or new.
+                motion = measure_motion(before, after, changed);
                 const cv::Mat labels = session.history.classify_and_observe(after, changed, rc);
                 if (!args.change_maps.empty()) {
                     std::error_code ec;
@@ -203,9 +208,13 @@ int main(int argc, char** argv)
                 ctx.focus_locality = measure_locality(before, after, session.focus,
                                                       vcfg.key_focus_radius, d);
 
+            const DragGesture drag = measure_drag(session, action, before, after);
+            ctx.drag = &drag;
+
             VerificationResult vr;
             if (args.verify) vr = verify_action(action, d, loc, vcfg, ctx);
 
+            session.note_press(action, before);
             session.advance(s.has_coord, {s.x, s.y}, rc.novel_blocks);
 
             const auto t1 = std::chrono::steady_clock::now();
@@ -240,7 +249,34 @@ int main(int argc, char** argv)
               << ",\"blocks_changed\":" << rc.changed_blocks
               << ",\"blocks_novel\":" << rc.novel_blocks
               << ",\"blocks_revisit\":" << rc.revisit_blocks
-              << ",\"no_novel_run\":" << session.no_novel_run;
+              << ",\"no_novel_run\":" << session.no_novel_run
+              << ",\"motion_textured\":" << motion.textured_blocks
+              << ",\"motion_moved\":" << motion.moved_blocks
+              << ",\"motion_new\":" << motion.new_blocks
+              << ",\"motion_ambiguous\":" << motion.ambiguous_blocks
+              << ",\"motion_clusters\":[";
+            for (size_t c = 0; c < motion.clusters.size() && c < 4; ++c) {
+                const MotionCluster& m = motion.clusters[c];
+                j << (c ? "," : "") << "{\"mv\":[" << m.mv.x << "," << m.mv.y << "]"
+                  << ",\"blocks\":" << m.blocks
+                  << ",\"src\":[" << m.src.x << "," << m.src.y << "," << m.src.width << "," << m.src.height << "]"
+                  << ",\"dst\":[" << m.dst.x << "," << m.dst.y << "," << m.dst.width << "," << m.dst.height << "]}";
+            }
+            j << "]";
+            if (drag.valid) {
+                j << ",\"drag_start\":[" << drag.start.x << "," << drag.start.y << "]"
+                  << ",\"drag_moved\":" << drag.motion.moved_blocks
+                  << ",\"drag_new\":" << drag.motion.new_blocks
+                  << ",\"drag_clusters\":[";
+                for (size_t c = 0; c < drag.motion.clusters.size() && c < 4; ++c) {
+                    const MotionCluster& m = drag.motion.clusters[c];
+                    j << (c ? "," : "") << "{\"mv\":[" << m.mv.x << "," << m.mv.y << "]"
+                      << ",\"blocks\":" << m.blocks
+                      << ",\"src\":[" << m.src.x << "," << m.src.y << "," << m.src.width << "," << m.src.height << "]"
+                      << ",\"dst\":[" << m.dst.x << "," << m.dst.y << "," << m.dst.width << "," << m.dst.height << "]}";
+                }
+                j << "]";
+            }
             if (loc.valid) {
                 j << ",\"locality_radius\":" << args.radius
                   << ",\"frac_within_r\":" << loc.frac_within_r
